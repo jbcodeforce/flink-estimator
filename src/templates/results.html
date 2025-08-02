@@ -38,6 +38,10 @@
                                 <span class="value highlight">{{ estimation.input_summary.total_throughput_mb_per_sec }} MB/sec</span>
                             </div>
                             <div class="summary-item">
+                                <span class="label">Expected Latency:</span>
+                                <span class="value">{{ estimation.input_summary.expected_latency_seconds }} sec</span>
+                            </div>
+                            <div class="summary-item">
                                 <span class="label">Simple Statements:</span>
                                 <span class="value">{{ estimation.input_summary.simple_statements }}</span>
                             </div>
@@ -48,6 +52,10 @@
                             <div class="summary-item">
                                 <span class="label">Complex Statements:</span>
                                 <span class="value">{{ estimation.input_summary.complex_statements }}</span>
+                            </div>
+                            <div class="summary-item">
+                                <span class="label">Total Statements:</span>
+                                <span class="value highlight">{{ estimation.input_summary.total_statements }}</span>
                             </div>
                         </div>
                     </div>
@@ -189,6 +197,10 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
                 <input type="hidden" name="project_name" value="{{ project_name }}">
                 <input type="hidden" name="messages_per_second" value="{{ estimation.input_summary.messages_per_second }}">
                 <input type="hidden" name="avg_record_size_bytes" value="{{ estimation.input_summary.avg_record_size_bytes }}">
+                <input type="hidden" name="num_distinct_keys" value="{{ estimation.input_summary.num_distinct_keys }}">
+                <input type="hidden" name="data_skew_risk" value="{{ estimation.input_summary.data_skew_risk }}">
+                <input type="hidden" name="bandwidth_capacity_mbps" value="{{ estimation.input_summary.bandwidth_capacity_mbps }}">
+                <input type="hidden" name="expected_latency_seconds" value="{{ estimation.input_summary.expected_latency_seconds }}">
                 <input type="hidden" name="simple_statements" value="{{ estimation.input_summary.simple_statements }}">
                 <input type="hidden" name="medium_statements" value="{{ estimation.input_summary.medium_statements }}">
                 <input type="hidden" name="complex_statements" value="{{ estimation.input_summary.complex_statements }}">

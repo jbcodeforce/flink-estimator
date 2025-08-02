@@ -23,6 +23,19 @@ A Flink job is composed of a graph of operators, Operators are deployed, chained
 * Checkpoint copies state for recovery
 * Checkpoint Interval determines how frequently state is captured
 * Aggregate State Size consumes bandwidth, determines recovery time which impacts latency
+
+The minimum number of nodes for Flink is 3. Each Flink Node may not exceed 8 CPU Cores per Flink Node. 
+CPU means an actual bare metal processing unit that has at least one CPU Core. Multi-core or hyperthreading processors are counted as one CPU.
+A CPU Core refers to “cpu units” in Kubernetes. 1 CPU is equivalent to one AWS vCPU, 1 GCP core, 1 Azure vCore or 1 hyperthread on a bare-metal processor with hyperthreading enabled.
+CP-Flink node-based pricing is purposefully distinct from the number of nodes in the K8s cluster.
+
+Consider a Flink node (running task manager) to be a 4 CPU node, with 16GB of memory. They should process 20 to 50 MB/s of data.
+Typical Flink jobs have a lot of state and benefit for more memory.
+
+Think to scale vertically before horizontally.
+
+Heuristics:
+* increase the number of task managers until there is enough resource to get the expected throughput and recovery times
 """
 
 import math
@@ -60,8 +73,6 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     Returns:
         EstimationResult: Complete estimation with resource recommendations
     """
-    
-    # Use properties from EstimationInput for calculations
     total_throughput_mb = input_params.total_throughput_mb_per_sec
     
     # Convert bandwidth from Mbps to MB/s for comparison (divide by 8)
@@ -145,6 +156,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         num_distinct_keys=input_params.num_distinct_keys,
         data_skew_risk=input_params.data_skew_risk,
         bandwidth_capacity_mbps=input_params.bandwidth_capacity_mbps,
+        expected_latency_seconds=input_params.expected_latency_seconds,
         simple_statements=input_params.simple_statements,
         medium_statements=input_params.medium_statements,
         complex_statements=input_params.complex_statements,

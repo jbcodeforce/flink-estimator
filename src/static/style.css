@@ -776,4 +776,74 @@ footer {
         font-size: 0.9em;
         padding: 12px 15px;
     }
+}
+
+/* Considerations tab styles */
+.considerations-content {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
+
+.consideration-section {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border-left: 4px solid #667eea;
+}
+
+.consideration-section.warning {
+    border-left-color: #f39c12;
+    background: #fefefe;
+}
+
+.consideration-section h3 {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 1.1em;
+}
+
+.principle {
+    color: #555;
+    line-height: 1.6;
+}
+
+.principle p {
+    margin: 0 0 10px 0;
+}
+
+.principle ul {
+    margin: 10px 0;
+    padding-left: 20px;
+}
+
+.principle li {
+    margin: 5px 0;
+}
+
+.note {
+    font-style: italic;
+    color: #666;
+    font-size: 0.95em;
+    background: #f8f9fa;
+    padding: 10px;
+    border-radius: 4px;
+    border-left: 3px solid #dee2e6;
+}
+
+.highlight {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 12px;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.warning .principle {
+    color: #d68910;
+}
+
+.warning h3 {
+    color: #d68910;
 } 

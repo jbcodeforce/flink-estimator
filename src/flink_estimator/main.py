@@ -53,6 +53,7 @@ async def estimate_resources(
     num_distinct_keys: Annotated[int, Form()] = 100000,
     data_skew_risk: Annotated[str, Form()] = "medium",
     bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0
@@ -68,6 +69,7 @@ async def estimate_resources(
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
             bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements
@@ -105,6 +107,7 @@ async def api_estimate(
     num_distinct_keys: int = 100000,
     data_skew_risk: str = "medium",
     bandwidth_capacity_mbps: int = 1000,
+    expected_latency_seconds: float = 1.0,
     simple_statements: int = 0,
     medium_statements: int = 0,
     complex_statements: int = 0
@@ -118,6 +121,7 @@ async def api_estimate(
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
             bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements
@@ -150,6 +154,7 @@ async def save_estimation(
     num_distinct_keys: Annotated[int, Form()] = 100000,
     data_skew_risk: Annotated[str, Form()] = "medium",
     bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0
@@ -164,6 +169,7 @@ async def save_estimation(
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
             bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements

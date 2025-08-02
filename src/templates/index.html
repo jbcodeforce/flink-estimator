@@ -29,6 +29,9 @@
                     <button type="button" class="tab-button" data-tab="statement-complexity">
                         ⚙️ Statement Complexity
                     </button>
+                    <button type="button" class="tab-button" data-tab="considerations">
+                        📋 Considerations
+                    </button>
                 </div>
 
                 <!-- Tab 1: Project & Workload -->
@@ -77,6 +80,20 @@
                         </div>
 
                         <div class="form-group">
+                            <label for="expected_latency_seconds">Expected Latency (seconds):</label>
+                            <input 
+                                type="number" 
+                                id="expected_latency_seconds" 
+                                name="expected_latency_seconds" 
+                                step="0.1"
+                                min="0.1"
+                                value="1.0"
+                                placeholder="e.g., 1.0"
+                            >
+                            <div class="help-text">Expected end-to-end processing latency in seconds</div>
+                        </div>
+
+                        <div class="form-group">
                             <label for="num_distinct_keys">Number of Distinct Keys:</label>
                             <input 
                                 type="number" 
@@ -103,6 +120,8 @@
                             </select>
                             <div class="help-text">Risk of uneven data distribution which can cause hotspots and performance issues</div>
                         </div>
+
+  
                     </div>
                 </div>
 
@@ -212,6 +231,101 @@
                                         <li>Multi-level window operations</li>
                                         <li>User-defined functions (UDFs)</li>
                                         <li>Advanced analytical queries</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Considerations -->
+                <div class="tab-content" id="considerations">
+                    <div class="form-section">
+                        <h2>📋 Estimation Principles & Considerations</h2>
+                        <p class="section-description">
+                            Understanding the core principles behind this resource estimator helps you make better decisions about your Flink cluster sizing.
+                        </p>
+                        
+                        <div class="considerations-content">
+                            <div class="consideration-section">
+                                <h3>🎯 Core Performance Rule</h3>
+                                <div class="principle">
+                                    <p><strong>Flink can process ~10,000 records per second per CPU core</strong></p>
+                                    <p class="note">This baseline may decrease with larger messages, bigger state, key skew, or high number of distinct keys.</p>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
+                                <h3>⚙️ Statement Complexity Impact</h3>
+                                <div class="principle">
+                                    <p>Statement complexity reflects the usage of complex operators like:</p>
+                                    <ul>
+                                        <li>Joins between multiple streams</li>
+                                        <li>Windowed aggregations</li>
+                                        <li>Complex analytics functions</li>
+                                    </ul>
+                                    <p class="note">More complex operations require additional CPU and memory resources.</p>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
+                                <h3>🏗️ Architecture Assumptions</h3>
+                                <div class="principle">
+                                    <ul>
+                                        <li><strong>Source & Sink latency:</strong> Assumed to be minimal</li>
+                                        <li><strong>Key size:</strong> Assumed to be small (few bytes)</li>
+                                        <li><strong>Minimum cluster size:</strong> 3 nodes required</li>
+                                        <li><strong>CPU limit:</strong> Maximum 8 CPU cores per Flink node</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
+                                <h3>💾 State Management & Checkpointing</h3>
+                                <div class="principle">
+                                    <ul>
+                                        <li><strong>Working State:</strong> Kept locally in RocksDB</li>
+                                        <li><strong>Backup:</strong> State backed up to distributed storage</li>
+                                        <li><strong>Recovery:</strong> Checkpoint size affects recovery time</li>
+                                        <li><strong>Frequency:</strong> Checkpoint interval determines state capture frequency</li>
+                                    </ul>
+                                    <p class="note">Aggregate state size consumes bandwidth and impacts recovery latency.</p>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
+                                <h3>📊 Resource Guidelines</h3>
+                                <div class="principle">
+                                    <p><strong>Typical Flink node configuration:</strong></p>
+                                    <ul>
+                                        <li>4 CPU cores with 16GB memory</li>
+                                        <li>Should process 20-50 MB/s of data</li>
+                                        <li>Jobs with significant state benefit from more memory</li>
+                                    </ul>
+                                    <p class="highlight">💡 <strong>Scaling Strategy:</strong> Scale vertically before horizontally</p>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
+                                <h3>🎯 Estimation Heuristics</h3>
+                                <div class="principle">
+                                    <p>The estimator increases task managers until there are sufficient resources for:</p>
+                                    <ul>
+                                        <li>Expected throughput requirements</li>
+                                        <li>Acceptable recovery times</li>
+                                        <li>Handling data skew and key distribution</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section warning">
+                                <h3>⚠️ Important Notes</h3>
+                                <div class="principle">
+                                    <ul>
+                                        <li>These are <strong>estimates</strong> - always test with your actual workload</li>
+                                        <li>Start with conservative estimates and adjust based on testing</li>
+                                        <li>Monitor your cluster performance and tune as needed</li>
+                                        <li>Consider your specific data patterns and business requirements</li>
                                     </ul>
                                 </div>
                             </div>

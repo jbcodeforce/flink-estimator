@@ -88,7 +88,8 @@ class TestBasicEstimation:
         # High volume should require significant resources
         assert result.resource_estimates.total_memory_mb > 5000
         assert result.resource_estimates.total_cpu_cores > 8
-        assert result.resource_estimates.processing_load_score == pytest.approx(18.1, rel=1e-1)
+        # Processing load: (5*1.2 + 3*2.0 + 2*3.5) * 2.0 (key factor) = 19.0 * 2.0 = 38.0
+        assert result.resource_estimates.processing_load_score == pytest.approx(38.0, rel=1e-1)
         
         # Multiple TaskManagers needed
         assert result.cluster_recommendations.taskmanagers.count > 2
@@ -110,8 +111,8 @@ class TestComplexityScenarios:
         
         result = calculate_flink_estimation(input_params)
         
-        # Simple statements have multiplier of 1.2
-        expected_load = 10 * 1.2
+        # Simple statements: (10 * 1.2) * 2.0 (key distribution factor) = 12.0 * 2.0 = 24.0
+        expected_load = (10 * 1.2) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Should have reasonable but not excessive resources
@@ -131,8 +132,8 @@ class TestComplexityScenarios:
         
         result = calculate_flink_estimation(input_params)
         
-        # Complex statements have multiplier of 3.5
-        expected_load = 5 * 3.5
+        # Complex statements: (5 * 3.5) * 2.0 (key distribution factor) = 17.5 * 2.0 = 35.0
+        expected_load = (5 * 3.5) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Complex processing should require more CPU
@@ -154,8 +155,8 @@ class TestComplexityScenarios:
         
         result = calculate_flink_estimation(input_params)
         
-        # Total load = 4.8 + 6.0 + 7.0 = 17.8
-        expected_load = 4 * 1.2 + 3 * 2.0 + 2 * 3.5
+        # Total load = (4.8 + 6.0 + 7.0) * 2.0 (key factor) = 17.8 * 2.0 = 35.6
+        expected_load = (4 * 1.2 + 3 * 2.0 + 2 * 3.5) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Mixed complexity should balance resources
@@ -183,8 +184,8 @@ class TestThroughputScaling:
         expected_throughput = (500 * 128) / (1024 * 1024)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-1)
         
-        # Should use minimal resources
-        assert result.resource_estimates.total_cpu_cores <= 8
+        # Should use minimal resources (now includes skew factor of 1.3 for medium skew)
+        assert result.resource_estimates.total_cpu_cores <= 15
         
     def test_medium_throughput(self):
         """Test medium throughput scenario."""
@@ -203,9 +204,9 @@ class TestThroughputScaling:
         expected_throughput = (10000 * 1024) / (1024 * 1024)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-2)
         
-        # Should scale resources accordingly
+        # Should scale resources accordingly (now includes skew factor)
         assert result.resource_estimates.total_cpu_cores > 4
-        assert result.resource_estimates.total_cpu_cores < 20
+        assert result.resource_estimates.total_cpu_cores <= 25
         
     def test_high_throughput(self):
         """Test high throughput scenario."""
@@ -483,6 +484,136 @@ def test_estimation_consistency(sample_estimation_input):
     assert result1.resource_estimates.total_memory_mb == result2.resource_estimates.total_memory_mb
     assert result1.resource_estimates.total_cpu_cores == result2.resource_estimates.total_cpu_cores
     assert result1.resource_estimates.processing_load_score == result2.resource_estimates.processing_load_score
+
+
+class TestDataSkewAndBandwidth:
+    """Test new features: data skew risk and bandwidth capacity."""
+    
+    def test_data_skew_impact(self):
+        """Test that data skew risk affects resource allocation."""
+        base_params = {
+            "project_name": "Skew Test",
+            "messages_per_second": 5000,
+            "avg_record_size_bytes": 1024,
+            "num_distinct_keys": 100000,
+            "bandwidth_capacity_mbps": 1000,
+            "simple_statements": 2,
+            "medium_statements": 1,
+            "complex_statements": 0
+        }
+        
+        # Test low skew
+        low_skew = EstimationInput(**base_params, data_skew_risk="low")
+        low_result = calculate_flink_estimation(low_skew)
+        
+        # Test medium skew
+        medium_skew = EstimationInput(**base_params, data_skew_risk="medium")
+        medium_result = calculate_flink_estimation(medium_skew)
+        
+        # Test high skew
+        high_skew = EstimationInput(**base_params, data_skew_risk="high")
+        high_result = calculate_flink_estimation(high_skew)
+        
+        # High skew should require more resources than medium, which should require more than low
+        assert high_result.resource_estimates.total_memory_mb > medium_result.resource_estimates.total_memory_mb
+        assert medium_result.resource_estimates.total_memory_mb > low_result.resource_estimates.total_memory_mb
+        
+        assert high_result.resource_estimates.total_cpu_cores > medium_result.resource_estimates.total_cpu_cores
+        assert medium_result.resource_estimates.total_cpu_cores > low_result.resource_estimates.total_cpu_cores
+        
+        # High skew should have more conservative parallelism relative to total CPU cores
+        high_parallelism_ratio = high_result.scaling_recommendations.recommended_parallelism / high_result.resource_estimates.total_cpu_cores
+        medium_parallelism_ratio = medium_result.scaling_recommendations.recommended_parallelism / medium_result.resource_estimates.total_cpu_cores
+        low_parallelism_ratio = low_result.scaling_recommendations.recommended_parallelism / low_result.resource_estimates.total_cpu_cores
+        
+        # High skew should be more conservative (lower ratio) than medium and low
+        assert high_parallelism_ratio <= medium_parallelism_ratio
+        assert high_parallelism_ratio <= low_parallelism_ratio
+        
+        # High skew should have limited max parallelism (equal to total cores, not 2x)
+        assert high_result.scaling_recommendations.max_parallelism == high_result.resource_estimates.total_cpu_cores
+        assert medium_result.scaling_recommendations.max_parallelism == medium_result.resource_estimates.total_cpu_cores * 2
+    
+    def test_bandwidth_bottleneck(self):
+        """Test that low bandwidth capacity triggers additional CPU overhead."""
+        # High throughput scenario
+        base_params = {
+            "project_name": "Bandwidth Test",
+            "messages_per_second": 100000,
+            "avg_record_size_bytes": 2048,
+            "num_distinct_keys": 100000,
+            "data_skew_risk": "medium",
+            "simple_statements": 2,
+            "medium_statements": 1,
+            "complex_statements": 0
+        }
+        
+        # Low bandwidth that will be a bottleneck
+        low_bandwidth = EstimationInput(**base_params, bandwidth_capacity_mbps=100)  # Only 100 Mbps
+        low_bw_result = calculate_flink_estimation(low_bandwidth)
+        
+        # High bandwidth that won't be a bottleneck
+        high_bandwidth = EstimationInput(**base_params, bandwidth_capacity_mbps=10000)  # 10 Gbps
+        high_bw_result = calculate_flink_estimation(high_bandwidth)
+        
+        # Low bandwidth should require more CPU due to compression/optimization overhead
+        assert low_bw_result.resource_estimates.total_cpu_cores >= high_bw_result.resource_estimates.total_cpu_cores
+        
+        # Both should have the same processing load score (bandwidth doesn't affect this)
+        assert low_bw_result.resource_estimates.processing_load_score == high_bw_result.resource_estimates.processing_load_score
+    
+    def test_distinct_keys_impact(self):
+        """Test that number of distinct keys affects resource allocation."""
+        base_params = {
+            "project_name": "Keys Test",
+            "messages_per_second": 10000,
+            "avg_record_size_bytes": 1024,
+            "data_skew_risk": "medium",
+            "bandwidth_capacity_mbps": 1000,
+            "simple_statements": 2,
+            "medium_statements": 1,
+            "complex_statements": 0
+        }
+        
+        # Few keys
+        few_keys = EstimationInput(**base_params, num_distinct_keys=1000)
+        few_keys_result = calculate_flink_estimation(few_keys)
+        
+        # Many keys
+        many_keys = EstimationInput(**base_params, num_distinct_keys=10000000)
+        many_keys_result = calculate_flink_estimation(many_keys)
+        
+        # More keys should require more memory for state management
+        assert many_keys_result.resource_estimates.total_memory_mb > few_keys_result.resource_estimates.total_memory_mb
+        
+        # Processing load should be affected by key distribution factor
+        assert many_keys_result.resource_estimates.processing_load_score >= few_keys_result.resource_estimates.processing_load_score
+    
+    def test_input_summary_includes_new_fields(self):
+        """Test that input summary includes all new fields."""
+        input_params = EstimationInput(
+            project_name="Summary Test",
+            messages_per_second=5000,
+            avg_record_size_bytes=1024,
+            num_distinct_keys=250000,
+            data_skew_risk="high",
+            bandwidth_capacity_mbps=500,
+            simple_statements=1,
+            medium_statements=1,
+            complex_statements=1
+        )
+        
+        result = calculate_flink_estimation(input_params)
+        
+        # Verify all new fields are in the summary
+        assert result.input_summary.num_distinct_keys == 250000
+        assert result.input_summary.data_skew_risk == "high"
+        assert result.input_summary.bandwidth_capacity_mbps == 500
+        
+        # Verify existing fields still work
+        assert result.input_summary.messages_per_second == 5000
+        assert result.input_summary.avg_record_size_bytes == 1024
+        assert result.input_summary.total_statements == 3
 
 
 def test_calculation_properties(sample_estimation_input):

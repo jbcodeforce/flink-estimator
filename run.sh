@@ -98,7 +98,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --test)
             print_info "Running unit tests..."
-            cd src
+            # Navigate to src directory if not already there
+            if [ ! -f "pytest.ini" ]; then
+                cd src
+            fi
             uv run pytest tests/ -v
             exit $?
             ;;

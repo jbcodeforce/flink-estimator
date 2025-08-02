@@ -17,6 +17,7 @@ class EstimationInput(BaseModel):
     num_distinct_keys: int = Field(default=100_000, ge=1, description="Number of distinct keys for partitioning")
     data_skew_risk: Literal["low", "medium", "high"] = Field(default="medium", description="Risk level of data skew")
     bandwidth_capacity_mbps: int = Field(default=1000, gt=0, description="Network bandwidth capacity in Mbps")
+    expected_latency_seconds: float = Field(default=1.0, gt=0, description="Expected end-to-end latency in seconds")
     simple_statements: int = Field(default=0, ge=0, description="Number of simple statements")
     medium_statements: int = Field(default=0, ge=0, description="Number of medium complexity statements")
     complex_statements: int = Field(default=0, ge=0, description="Number of complex statements")
@@ -44,6 +45,7 @@ class InputSummary(BaseModel):
     num_distinct_keys: int
     data_skew_risk: str
     bandwidth_capacity_mbps: int
+    expected_latency_seconds: float
     simple_statements: int
     medium_statements: int
     complex_statements: int
