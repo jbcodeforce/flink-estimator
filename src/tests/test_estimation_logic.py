@@ -34,7 +34,8 @@ class TestBasicEstimation:
         # Check resource estimates are reasonable for minimal load
         assert result.resource_estimates.total_memory_mb >= 512
         assert result.resource_estimates.total_cpu_cores >= 2
-        assert result.resource_estimates.processing_load_score == pytest.approx(1.2, rel=1e-1)
+        # Processing load now includes key distribution factor: 1.2 * 2.0 = 2.4 for 100k keys
+        assert result.resource_estimates.processing_load_score == pytest.approx(2.4, rel=1e-1)
         
         # Verify cluster recommendations
         assert result.cluster_recommendations.taskmanagers.count >= 2
@@ -60,7 +61,8 @@ class TestBasicEstimation:
         # Check moderate workload resources
         assert result.resource_estimates.total_memory_mb > 1000
         assert result.resource_estimates.total_cpu_cores >= 4
-        assert result.resource_estimates.processing_load_score == pytest.approx(11.1, rel=1e-1)
+        # Processing load: (3*1.2 + 2*2.0 + 1*3.5) * 2.0 = 11.1 * 2.0 = 22.2
+        assert result.resource_estimates.processing_load_score == pytest.approx(22.2, rel=1e-1)
         
         # TaskManager scaling
         assert result.cluster_recommendations.taskmanagers.count >= 2

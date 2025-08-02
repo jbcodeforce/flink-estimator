@@ -6,7 +6,7 @@ estimation results, and file persistence.
 """
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Optional, Literal
 
 
 class EstimationInput(BaseModel):
@@ -14,6 +14,9 @@ class EstimationInput(BaseModel):
     project_name: str = Field(..., min_length=1, max_length=100, description="Name of the project")
     messages_per_second: int = Field(..., gt=0, description="Expected messages per second")
     avg_record_size_bytes: int = Field(..., gt=0, description="Average record size in bytes")
+    num_distinct_keys: int = Field(default=100_000, ge=1, description="Number of distinct keys for partitioning")
+    data_skew_risk: Literal["low", "medium", "high"] = Field(default="medium", description="Risk level of data skew")
+    bandwidth_capacity_mbps: int = Field(default=1000, gt=0, description="Network bandwidth capacity in Mbps")
     simple_statements: int = Field(default=0, ge=0, description="Number of simple statements")
     medium_statements: int = Field(default=0, ge=0, description="Number of medium complexity statements")
     complex_statements: int = Field(default=0, ge=0, description="Number of complex statements")
@@ -38,6 +41,9 @@ class InputSummary(BaseModel):
     messages_per_second: int
     avg_record_size_bytes: int
     total_throughput_mb_per_sec: float
+    num_distinct_keys: int
+    data_skew_risk: str
+    bandwidth_capacity_mbps: int
     simple_statements: int
     medium_statements: int
     complex_statements: int
