@@ -75,7 +75,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     """
     total_throughput_mb = input_params.total_throughput_mb_per_sec
     
-    # Convert bandwidth from Mbps to MB/s for comparison (divide by 8)
+    # Convert bandwidth from Mbps to MB/s for comparison
     bandwidth_capacity_mb_per_sec = input_params.bandwidth_capacity_mbps / 8
     
     # Check if throughput exceeds bandwidth capacity
@@ -119,12 +119,21 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     # Additional memory for state management based on distinct keys
     state_memory_factor = math.log10(input_params.num_distinct_keys) * 100  # More keys = more state
     
+    # Additional memory for low-latency buffering and optimization
+    latency_memory_overhead = 0
+    if input_params.expected_latency_seconds <= 1.0:
+        # Low latency needs more buffering and in-memory optimization
+        latency_memory_overhead = total_throughput_mb * 1000  # MB for buffering
+    elif input_params.expected_latency_seconds <= 5.0:
+        latency_memory_overhead = total_throughput_mb * 500   # Moderate buffering
+    
     # Apply skew factor to memory - high skew requires more memory for hotspots
     total_memory_mb = (
         input_params.total_statements * base_memory_per_statement +
         throughput_memory_factor +
         processing_load * 100 +  # Additional memory for complex processing
-        state_memory_factor  # Memory for state management
+        state_memory_factor +    # Memory for state management
+        latency_memory_overhead  # Extra memory for low-latency processing
     ) * skew_factor
     
     # CPU estimation (cores)
@@ -133,8 +142,19 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     throughput_cpu_factor = math.ceil(total_throughput_mb / 50)  # 1 core per 50MB/s
     complexity_cpu = math.ceil(processing_load / 2)
     
-    # Apply skew factor to CPU - high skew requires more CPU for rebalancing
-    total_cpu_cores = (base_cpu_cores + throughput_cpu_factor + complexity_cpu + bandwidth_cpu_penalty) * skew_factor
+    # Latency factor - stricter latency requirements need more resources
+    # Lower latency (< 1s) needs additional overhead for optimization
+    if input_params.expected_latency_seconds <= 0.5:
+        latency_factor = 1.5  # 50% more resources for sub-500ms latency
+    elif input_params.expected_latency_seconds <= 1.0:
+        latency_factor = 1.2  # 20% more resources for sub-1s latency
+    elif input_params.expected_latency_seconds <= 5.0:
+        latency_factor = 1.1  # 10% more resources for sub-5s latency
+    else:
+        latency_factor = 1.0  # Normal resources for relaxed latency (>5s)
+    
+    # Apply skew factor and latency factor to CPU
+    total_cpu_cores = (base_cpu_cores + throughput_cpu_factor + complexity_cpu + bandwidth_cpu_penalty) * skew_factor * latency_factor
     total_cpu_cores = math.ceil(total_cpu_cores)  # Round up to whole cores
     
     # TaskManager recommendations
@@ -187,24 +207,45 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         taskmanagers=taskmanager_config
     )
     
-    # Adjust parallelism recommendations based on skew risk
+    # Adjust parallelism recommendations based on skew risk and latency requirements
     if input_params.data_skew_risk == "high":
         # For high skew, recommend more conservative parallelism to avoid hotspots
         min_parallelism = max(1, total_cpu_cores // 3)
         recommended_parallelism = max(total_cpu_cores // 2, min(input_params.num_distinct_keys // 1000, total_cpu_cores))
         max_parallelism = total_cpu_cores
         # Longer checkpointing for skewed data
-        checkpoint_interval = min(60000, max(10000, 15000 + int(processing_load * 1000)))
+        base_checkpoint_interval = min(60000, max(10000, 15000 + int(processing_load * 1000)))
     elif input_params.data_skew_risk == "medium":
         min_parallelism = max(1, total_cpu_cores // 2)
         recommended_parallelism = min(total_cpu_cores, max(total_cpu_cores // 2, input_params.num_distinct_keys // 2000))
         max_parallelism = total_cpu_cores * 2
-        checkpoint_interval = min(60000, max(5000, 10000 + int(processing_load * 1000)))
+        base_checkpoint_interval = min(60000, max(5000, 10000 + int(processing_load * 1000)))
     else:  # low skew
         min_parallelism = max(1, total_cpu_cores // 2)
         recommended_parallelism = total_cpu_cores
         max_parallelism = total_cpu_cores * 2
-        checkpoint_interval = min(60000, max(5000, 8000 + int(processing_load * 1000)))
+        base_checkpoint_interval = min(60000, max(5000, 8000 + int(processing_load * 1000)))
+    
+    # Adjust checkpoint interval based on latency requirements
+    # Stricter latency needs more frequent checkpoints for faster recovery
+    if input_params.expected_latency_seconds <= 0.5:
+        # Very strict latency: checkpoint every 3-5 seconds
+        checkpoint_interval = min(base_checkpoint_interval, 5000)
+    elif input_params.expected_latency_seconds <= 1.0:
+        # Strict latency: checkpoint every 5-10 seconds  
+        checkpoint_interval = min(base_checkpoint_interval, 10000)
+    elif input_params.expected_latency_seconds <= 5.0:
+        # Moderate latency: checkpoint every 10-20 seconds
+        checkpoint_interval = min(base_checkpoint_interval, 20000)
+    else:
+        # Relaxed latency: use base interval
+        checkpoint_interval = base_checkpoint_interval
+    
+    # For very low latency, consider increasing parallelism for faster processing
+    if input_params.expected_latency_seconds <= 1.0:
+        # Boost recommended parallelism for low latency
+        parallelism_boost = max(1, int(2.0 / input_params.expected_latency_seconds))
+        recommended_parallelism = min(max_parallelism, recommended_parallelism * parallelism_boost)
     
     scaling_recommendations = ScalingRecommendations(
         min_parallelism=min_parallelism,
@@ -213,12 +254,15 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         checkpointing_interval_ms=checkpoint_interval
     )
     
-    return EstimationResult(
+    result= EstimationResult(
         input_summary=input_summary,
         resource_estimates=resource_estimates,
         cluster_recommendations=cluster_recommendations,
         scaling_recommendations=scaling_recommendations
     )
+    print("-"*80)
+    print(result.json())
+    return result
 
 
 def save_estimation_to_json(

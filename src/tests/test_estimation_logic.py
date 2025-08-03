@@ -139,8 +139,19 @@ class TestComplexityScenarios:
         # Complex processing should require more CPU
         assert result.resource_estimates.total_cpu_cores >= 6
         
-        # Longer checkpointing intervals for complex processing
-        assert result.scaling_recommendations.checkpointing_interval_ms > 15000
+        # With default 1.0s latency, checkpoint interval is capped at 10s
+        # For relaxed latency, test longer checkpointing intervals
+        relaxed_input = EstimationInput(
+            project_name="Complex Only Relaxed",
+            messages_per_second=1000,
+            avg_record_size_bytes=1024,
+            expected_latency_seconds=10.0,  # Relaxed latency
+            simple_statements=0,
+            medium_statements=0,
+            complex_statements=5
+        )
+        relaxed_result = calculate_flink_estimation(relaxed_input)
+        assert relaxed_result.scaling_recommendations.checkpointing_interval_ms > 15000
         
     def test_mixed_complexity(self):
         """Test workload with mixed statement complexities."""
@@ -363,6 +374,7 @@ class TestScalingRecommendations:
             project_name="Parallelism Test",
             messages_per_second=20000,
             avg_record_size_bytes=1024,
+            expected_latency_seconds=10.0,  # Use relaxed latency to avoid parallelism boost
             simple_statements=4,
             medium_statements=2,
             complex_statements=1
@@ -384,11 +396,12 @@ class TestScalingRecommendations:
         
     def test_checkpointing_interval(self):
         """Test checkpointing interval scales with processing complexity."""
-        # Simple workload
+        # Simple workload with relaxed latency
         simple_input = EstimationInput(
             project_name="Simple Checkpointing",
             messages_per_second=1000,
             avg_record_size_bytes=512,
+            expected_latency_seconds=10.0,  # Relaxed latency to see complexity differences
             simple_statements=2,
             medium_statements=0,
             complex_statements=0
@@ -396,11 +409,12 @@ class TestScalingRecommendations:
         
         simple_result = calculate_flink_estimation(simple_input)
         
-        # Complex workload
+        # Complex workload with relaxed latency
         complex_input = EstimationInput(
             project_name="Complex Checkpointing",
             messages_per_second=1000,
             avg_record_size_bytes=512,
+            expected_latency_seconds=10.0,  # Relaxed latency to see complexity differences
             simple_statements=0,
             medium_statements=0,
             complex_statements=5

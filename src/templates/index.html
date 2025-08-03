@@ -307,11 +307,26 @@
                             </div>
 
                             <div class="consideration-section">
+                                <h3>⏱️ Latency Impact on Resources</h3>
+                                <div class="principle">
+                                    <p><strong>Lower latency requirements significantly increase resource needs:</strong></p>
+                                    <ul>
+                                        <li><strong>Sub-500ms latency:</strong> +50% CPU, frequent checkpoints (10s), boosted parallelism</li>
+                                        <li><strong>Sub-1s latency:</strong> +20% CPU, extra buffering memory, 30s checkpoints</li>
+                                        <li><strong>Sub-5s latency:</strong> +10% CPU, moderate buffering, 60s checkpoints</li>
+                                        <li><strong>Relaxed latency (>5s):</strong> Standard resource allocation</li>
+                                    </ul>
+                                    <p class="note">Stricter latency requires more frequent checkpoints for faster recovery, additional memory for buffering, and extra CPU for low-latency optimizations.</p>
+                                </div>
+                            </div>
+
+                            <div class="consideration-section">
                                 <h3>🎯 Estimation Heuristics</h3>
                                 <div class="principle">
                                     <p>The estimator increases task managers until there are sufficient resources for:</p>
                                     <ul>
                                         <li>Expected throughput requirements</li>
+                                        <li>Latency-appropriate checkpoint intervals</li>
                                         <li>Acceptable recovery times</li>
                                         <li>Handling data skew and key distribution</li>
                                     </ul>

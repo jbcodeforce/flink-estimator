@@ -67,7 +67,7 @@ docker build -t flink-estimator .
 
 # Run the container
 docker run -d \
-  --name flink-estimator \
+  --name jbcodeforce/flink-estimator \
   -p 8000:8000 \
   -v flink_estimations:/app/saved_estimations \
   flink-estimator
