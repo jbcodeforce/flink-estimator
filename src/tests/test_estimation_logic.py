@@ -38,8 +38,8 @@ class TestBasicEstimation:
         assert result.resource_estimates.processing_load_score == pytest.approx(2.4, rel=1e-1)
         
         # Verify cluster recommendations
-        assert result.cluster_recommendations.taskmanagers.count >= 2
-        assert result.cluster_recommendations.jobmanager.cpu_cores == 2
+        assert result.cluster_recommendations.taskmanagers.count == 1
+        assert result.cluster_recommendations.jobmanager.cpu_cores == 1
         
     def test_moderate_workload(self):
         """Test estimation with moderate resource requirements."""

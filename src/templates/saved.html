@@ -10,12 +10,16 @@
     <div class="container">
         <header>
             <h1>📂 Saved Estimations</h1>
-            <p class="subtitle">Manage your saved Flink resource estimations</p>
+            <p class="subtitle">Manage and review your saved Flink resource estimations</p>
+            <div class="header-nav">
+                <a href="/" class="nav-link">🏠 Home</a>
+                <a href="/estimation-form" class="nav-link">🧮 New Estimation</a>
+                <a href="/considerations" class="nav-link">📋 Guide</a>
+            </div>
         </header>
 
         <main>
             <div class="actions" style="margin-bottom: 30px;">
-                <a href="/" class="btn btn-primary">← New Estimation</a>
                 <button onclick="refreshList()" class="btn btn-secondary" id="refreshBtn">🔄 Refresh</button>
             </div>
 

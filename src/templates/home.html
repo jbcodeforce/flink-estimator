@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flink Resource Estimator</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
+            <h1>Flink Resource Estimator</h1>
+            <p class="subtitle">Estimate your Apache Flink or Confluent Platform for Flink cluster resource requirements</p>
+        </header>
+
+        <main class="home-main">
+            <div class="tiles-container">
+                <div class="tile" onclick="window.location.href='/estimation-form'">
+                    <div class="tile-icon">🧮</div>
+                    <h2 class="tile-title">Start New Estimation</h2>
+                    <p class="tile-description">
+                        Configure your workload parameters and get resource recommendations for your Flink cluster
+                    </p>
+                    <div class="tile-action">
+                        <span class="action-text">Begin Analysis →</span>
+                    </div>
+                </div>
+
+                <div class="tile" onclick="window.location.href='/saved'">
+                    <div class="tile-icon">📂</div>
+                    <h2 class="tile-title">View Saved Estimations</h2>
+                    <p class="tile-description">
+                        Access and review your previously saved estimation configurations and results
+                    </p>
+                    <div class="tile-action">
+                        <span class="action-text">Browse Files →</span>
+                    </div>
+                </div>
+
+                <div class="tile" onclick="window.location.href='/considerations'">
+                    <div class="tile-icon">📋</div>
+                    <h2 class="tile-title">Estimation Guide</h2>
+                    <p class="tile-description">
+                        Learn about the principles, assumptions, and best practices behind resource estimation
+                    </p>
+                    <div class="tile-action">
+                        <span class="action-text">Read More →</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="welcome-section">
+                <div class="welcome-content">
+                    <h2>Welcome to Flink Resource Estimator</h2>
+                    <p>
+                        This tool helps you determine the optimal cluster size for your Apache Flink workloads. 
+                        By analyzing your data throughput, statement complexity, and performance requirements, 
+                        we provide tailored recommendations for CPU, memory, and cluster configuration.
+                    </p>
+                    
+                    <div class="features-grid">
+                        <div class="feature">
+                            <div class="feature-icon">⚡</div>
+                            <h3>Performance Focused</h3>
+                            <p>Optimized for high-throughput streaming workloads</p>
+                        </div>
+                        <div class="feature">
+                            <div class="feature-icon">🎯</div>
+                            <h3>Accurate Estimations</h3>
+                            <p>Based on real-world Flink performance metrics</p>
+                        </div>
+                        <div class="feature">
+                            <div class="feature-icon">🔧</div>
+                            <h3>Configurable</h3>
+                            <p>Customize parameters for your specific use case</p>
+                        </div>
+                        <div class="feature">
+                            <div class="feature-icon">💾</div>
+                            <h3>Save & Share</h3>
+                            <p>Save configurations and share with your team</p>
+                        </div>
+                    </div>
+
+                    <div class="cta-section">
+                        <p class="cta-text">Ready to optimize your Flink cluster?</p>
+                        <a href="/estimation-form" class="cta-button">
+                            🧮 Start Your First Estimation
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <div class="footer-content">
+                <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
+                <div class="footer-links">
+                    <a href="/docs" class="footer-link">📖 API Documentation</a>
+                    <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Add hover effects for tiles
+        document.addEventListener('DOMContentLoaded', function() {
+            const tiles = document.querySelectorAll('.tile');
+            
+            tiles.forEach(tile => {
+                tile.addEventListener('mouseenter', function() {
+                    this.style.transform = 'translateY(-5px)';
+                });
+                
+                tile.addEventListener('mouseleave', function() {
+                    this.style.transform = 'translateY(0)';
+                });
+            });
+        });
+    </script>
+</body>
+</html>

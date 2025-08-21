@@ -43,8 +43,20 @@ templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    """Serve the main estimation form."""
-    return templates.TemplateResponse("index.html", {"request": request})
+    """Serve the home page with navigation tiles."""
+    return templates.TemplateResponse("home.html", {"request": request})
+
+
+@app.get("/estimation-form", response_class=HTMLResponse)
+async def estimation_form(request: Request):
+    """Serve the estimation form page."""
+    return templates.TemplateResponse("estimation.html", {"request": request})
+
+
+@app.get("/considerations", response_class=HTMLResponse)
+async def considerations_page(request: Request):
+    """Serve the considerations/guide page."""
+    return templates.TemplateResponse("considerations.html", {"request": request})
 
 
 @app.get("/saved", response_class=HTMLResponse)

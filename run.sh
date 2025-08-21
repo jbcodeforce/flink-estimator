@@ -34,7 +34,7 @@ print_error() {
 
 # Print banner
 echo -e "${BLUE}"
-echo "🚀 Flink Resource Estimator"
+echo "Flink Resource Estimator"
 echo "================================"
 echo -e "${NC}"
 
@@ -73,7 +73,7 @@ uv pip install -r requirements.txt
 
 # Default values
 HOST=${HOST:-"0.0.0.0"}
-PORT=${PORT:-8000}
+PORT=${PORT:-8001}
 RELOAD=${RELOAD:-"--reload"}
 
 # Parse command line arguments
@@ -140,8 +140,8 @@ echo ""
 
 if [ -n "$RELOAD" ]; then
     print_info "Running in development mode with auto-reload enabled"
-    uv run uvicorn flink_estimator.main:app --host "$HOST" --port "$PORT" $RELOAD
+    uv run uvicorn main:app --host "$HOST" --port "$PORT" $RELOAD
 else
     print_info "Running in production mode"
-    uv run uvicorn flink_estimator.main:app --host "$HOST" --port "$PORT"
+    uv run uvicorn main:app --host "$HOST" --port "$PORT"
 fi
