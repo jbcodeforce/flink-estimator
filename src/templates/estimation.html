@@ -36,7 +36,7 @@
                         🌐 Network & Hardware
                     </button>
                     <button type="button" class="tab-button" data-tab="statement-complexity">
-                        ⚙️ Statement Complexity
+                        ⚙️ Flink SQL query Complexity
                     </button>
                 </div>
 
@@ -177,23 +177,23 @@
                                 ← Previous: Project & Workload
                             </button>
                             <button type="button" class="btn-next" onclick="switchToTab('statement-complexity')">
-                                Next: Statement Complexity →
+                                Next: SQL Queries Complexity →
                             </button>
                         </div>
                     </div>
                 </div>
 
-                <!-- Tab 3: Statement Complexity -->
+                <!-- Tab 3: SQL Queries Complexity -->
                 <div class="tab-content" id="statement-complexity">
                     <div class="form-section">
-                        <h2>Flink Statement Complexity</h2>
+                        <h2>Flink SQL Queries Complexity</h2>
                         <p class="section-description">
-                            Categorize your Flink SQL statements by complexity. This helps estimate processing overhead.
+                            Categorize your Flink SQL queries by complexity. This helps estimate processing overhead.
                         </p>
                         
                         <div class="complexity-grid">
                             <div class="complexity-item">
-                                <h3>Simple Statements</h3>
+                                <h3>Simple SQL Queries</h3>
                                 <p>SELECT, basic WHERE clauses, simple projections</p>
                                 <input 
                                     type="number" 
@@ -214,7 +214,7 @@
                             </div>
 
                             <div class="complexity-item">
-                                <h3>Medium Statements</h3>
+                                <h3>Medium SQL Queries</h3>
                                 <p>JOINs, GROUP BY, basic window operations, aggregations</p>
                                 <input 
                                     type="number" 
@@ -236,7 +236,7 @@
                             </div>
 
                             <div class="complexity-item">
-                                <h3>Complex Statements</h3>
+                                <h3>Complex SQL Queries</h3>
                                 <p>Advanced analytics, complex windows, nested queries, ML operations</p>
                                 <input 
                                     type="number" 
