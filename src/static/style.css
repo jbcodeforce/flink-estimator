@@ -312,7 +312,7 @@ header {
 
 .summary-item .value {
     font-weight: 700;
-    color: #333;
+    color: #2c3e50;
     font-size: 1.3em;
     line-height: 1.2;
 }
@@ -327,7 +327,8 @@ header {
 }
 
 .summary-item .value.highlight {
-    color: #667eea;
+    color: #fbf7f7;
+    font-weight: 800;
 }
 
 /* Resource cards */

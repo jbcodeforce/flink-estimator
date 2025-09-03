@@ -26,7 +26,9 @@ COPY . .
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app \
-    && chown -R app:app /app
+    && chown -R app:app /app \
+    && chmod -R 755 /app/static \
+    && chmod 644 /app/static/*
 USER app
 
 # Create saved_estimations directory with proper permissions

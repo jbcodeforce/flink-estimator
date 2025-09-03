@@ -19,7 +19,11 @@ class TestBasicEstimation:
         input_params = EstimationInput(
             project_name="Minimal Test",
             messages_per_second=100,
-            avg_record_size_bytes=256,
+            avg_record_size_bytes=512,
+            num_distinct_keys=100000,
+            data_skew_risk="low",
+            bandwidth_capacity_mbps= 10000, # 10 Gbps
+            expected_latency_seconds=1.0,
             simple_statements=1,
             medium_statements=0,
             complex_statements=0
@@ -29,13 +33,13 @@ class TestBasicEstimation:
         
         # Verify basic structure
         assert result.input_summary.total_statements == 1
-        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(0.02, rel=1e-1)
+        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(0.05, rel=1e-1)
         
         # Check resource estimates are reasonable for minimal load
         assert result.resource_estimates.total_memory_mb >= 512
-        assert result.resource_estimates.total_cpu_cores >= 2
-        # Processing load now includes key distribution factor: 1.2 * 2.0 = 2.4 for 100k keys
-        assert result.resource_estimates.processing_load_score == pytest.approx(2.4, rel=1e-1)
+        assert result.resource_estimates.total_cpu_cores >= 1
+        # Processing load includes key distribution factor: 0.25 * 1 * 2.0 = 0.5 for 100k keys
+        assert result.resource_estimates.processing_load_score == pytest.approx(0.5, rel=1e-1)
         
         # Verify cluster recommendations
         assert result.cluster_recommendations.taskmanagers.count == 1
@@ -61,8 +65,8 @@ class TestBasicEstimation:
         # Check moderate workload resources
         assert result.resource_estimates.total_memory_mb > 1000
         assert result.resource_estimates.total_cpu_cores >= 4
-        # Processing load: (3*1.2 + 2*2.0 + 1*3.5) * 2.0 = 11.1 * 2.0 = 22.2
-        assert result.resource_estimates.processing_load_score == pytest.approx(22.2, rel=1e-1)
+        # Processing load: (3*0.25 + 2*1.0 + 1*1.5) * 2.0 = (0.75 + 2.0 + 1.5) * 2.0 = 8.5
+        assert result.resource_estimates.processing_load_score == pytest.approx(8.5, rel=1e-1)
         
         # TaskManager scaling
         assert result.cluster_recommendations.taskmanagers.count >= 2
@@ -88,8 +92,8 @@ class TestBasicEstimation:
         # High volume should require significant resources
         assert result.resource_estimates.total_memory_mb > 5000
         assert result.resource_estimates.total_cpu_cores > 8
-        # Processing load: (5*1.2 + 3*2.0 + 2*3.5) * 2.0 (key factor) = 19.0 * 2.0 = 38.0
-        assert result.resource_estimates.processing_load_score == pytest.approx(38.0, rel=1e-1)
+        # Processing load: (5*0.25 + 3*1.0 + 2*3.5) * 2.0 (key factor) = 7.25 * 2.0 = 14.5
+        assert result.resource_estimates.processing_load_score == pytest.approx(14.5, rel=1e-1)
         
         # Multiple TaskManagers needed
         assert result.cluster_recommendations.taskmanagers.count > 2
@@ -111,8 +115,8 @@ class TestComplexityScenarios:
         
         result = calculate_flink_estimation(input_params)
         
-        # Simple statements: (10 * 1.2) * 2.0 (key distribution factor) = 12.0 * 2.0 = 24.0
-        expected_load = (10 * 1.2) * 2.0
+        # Simple statements: (10*0.25 + 0*1.0 + 0*3.5) (10 * 1.2) * 2.0 (key distribution factor) = 12.0 * 2.0 = 24.0
+        expected_load = (2.5) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Should have reasonable but not excessive resources
@@ -133,7 +137,7 @@ class TestComplexityScenarios:
         result = calculate_flink_estimation(input_params)
         
         # Complex statements: (5 * 3.5) * 2.0 (key distribution factor) = 17.5 * 2.0 = 35.0
-        expected_load = (5 * 3.5) * 2.0
+        expected_load = (5 * 1.5) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Complex processing should require more CPU
@@ -159,15 +163,15 @@ class TestComplexityScenarios:
             project_name="Mixed Complexity",
             messages_per_second=2000,
             avg_record_size_bytes=1024,
-            simple_statements=4,     # 4 * 1.2 = 4.8
-            medium_statements=3,     # 3 * 2.0 = 6.0
-            complex_statements=2     # 2 * 3.5 = 7.0
+            simple_statements=4,     # 4 * 0.25 = 1
+            medium_statements=3,     # 3 * 1.0 = 3.0
+            complex_statements=2     # 2 * 1.5 = 3.0
         )
-        
+       
         result = calculate_flink_estimation(input_params)
         
-        # Total load = (4.8 + 6.0 + 7.0) * 2.0 (key factor) = 17.8 * 2.0 = 35.6
-        expected_load = (4 * 1.2 + 3 * 2.0 + 2 * 3.5) * 2.0
+        # Total load = (1 + 3.0 + 7.0) * 2.0 (key factor) = 11 * 2.0 = 22
+        expected_load = (4 * 0.25 + 3 * 1.0 + 2 * 1.5) * 2.0
         assert result.resource_estimates.processing_load_score == pytest.approx(expected_load, rel=1e-1)
         
         # Mixed complexity should balance resources
@@ -262,8 +266,8 @@ class TestEdgeCases:
         assert result.resource_estimates.processing_load_score == 0.0
         
         # Still needs base resources for I/O
-        assert result.resource_estimates.total_cpu_cores >= 2
-        assert result.cluster_recommendations.taskmanagers.count >= 2
+        assert result.resource_estimates.total_cpu_cores >= 1
+        assert result.cluster_recommendations.taskmanagers.count >= 1
         
     def test_single_large_message(self):
         """Test with low frequency but very large messages."""
@@ -360,7 +364,7 @@ class TestResourceConstraints:
         
         # JobManager should have fixed specs
         jm = result.cluster_recommendations.jobmanager
-        assert jm.cpu_cores == 2  # Fixed at 2 cores
+        assert jm.cpu_cores == 1  # Fixed at 1 cores
         assert jm.memory_mb >= 1024  # At least 1GB
         assert jm.memory_mb <= 4096  # At most 4GB
 
@@ -643,3 +647,6 @@ def test_calculation_properties(sample_estimation_input):
     expected_throughput = (sample_estimation_input.messages_per_second * 
                           sample_estimation_input.avg_record_size_bytes) / (1024 * 1024)
     assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-3)
+
+if __name__ == "__main__":
+    pytest.main()

@@ -59,6 +59,8 @@ from .models import (
 
 # Configuration
 SAVED_ESTIMATIONS_DIR = "saved_estimations"
+MEDIUM_SKEW_FACTOR = 1.2
+BASE_CPU_CORES = .7
 os.makedirs(SAVED_ESTIMATIONS_DIR, exist_ok=True)
 
 
@@ -73,15 +75,15 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     Returns:
         EstimationResult: Complete estimation with resource recommendations
     """
-    total_throughput_mb = input_params.total_throughput_mb_per_sec
+    total_throughput_mbps = input_params.total_throughput_mb_per_sec
     
     # Convert bandwidth from Mbps to MB/s for comparison
     bandwidth_capacity_mb_per_sec = input_params.bandwidth_capacity_mbps / 8
     
     # Check if throughput exceeds bandwidth capacity
-    bandwidth_utilization = total_throughput_mb / bandwidth_capacity_mb_per_sec if bandwidth_capacity_mb_per_sec > 0 else 0
+    bandwidth_utilization = total_throughput_mbps / bandwidth_capacity_mb_per_sec if bandwidth_capacity_mb_per_sec > 0 else 0
     
-    # Adjust processing if bandwidth is a bottleneck
+    # Adjust cpu needs if bandwidth is a bottleneck
     if bandwidth_utilization > 0.8:  # If using more than 80% of bandwidth
         # Add CPU overhead for compression/optimization needed
         bandwidth_cpu_penalty = 2
@@ -89,32 +91,32 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         bandwidth_cpu_penalty = 0
     
     # Factor in distinct keys for state partitioning overhead
-    key_distribution_factor = min(2.0, math.log10(input_params.num_distinct_keys) / 2)
+    key_distribution_cpu_factor = min(2.0, math.log10(input_params.num_distinct_keys) / 2)
     
     # Data skew risk multipliers - affects resource allocation and parallelism
     skew_multipliers = {
         "low": 1.0,     # Even distribution, no additional overhead
-        "medium": 1.3,  # Some skew, moderate additional resources needed
-        "high": 1.8     # Significant skew, substantial additional resources needed
+        "medium": MEDIUM_SKEW_FACTOR,  # Some skew, moderate additional resources needed
+        "high": 1.7     # Significant skew, substantial additional resources needed
     }
-    skew_factor = skew_multipliers.get(input_params.data_skew_risk, 1.3)
+    skew_factor = skew_multipliers.get(input_params.data_skew_risk, MEDIUM_SKEW_FACTOR)
     
-    # Complexity multipliers (processing overhead)
-    simple_multiplier = 1.2
-    medium_multiplier = 2.0
-    complex_multiplier = 3.5
+    # Statement complexity multipliers
+    simple_multiplier = .25
+    medium_multiplier = 1
+    complex_multiplier = 1.5
     
     # Calculate processing load
     processing_load = (
         input_params.simple_statements * simple_multiplier +
         input_params.medium_statements * medium_multiplier +
         input_params.complex_statements * complex_multiplier
-    ) * key_distribution_factor  # Multiply by key distribution factor
+    ) * key_distribution_cpu_factor  # Multiply by key distribution factor
     
     # Memory estimation (MB)
     # Base memory per statement + buffer for throughput + state management
-    base_memory_per_statement = 512  # MB
-    throughput_memory_factor = total_throughput_mb * 2  # Buffer factor
+    base_memory_per_statement = 1024  # MB
+    throughput_memory_factor = total_throughput_mbps * 2  # Buffer factor
     
     # Additional memory for state management based on distinct keys
     state_memory_factor = math.log10(input_params.num_distinct_keys) * 100  # More keys = more state
@@ -123,9 +125,9 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     latency_memory_overhead = 0
     if input_params.expected_latency_seconds <= 1.0:
         # Low latency needs more buffering and in-memory optimization
-        latency_memory_overhead = total_throughput_mb * 1000  # MB for buffering
+        latency_memory_overhead = total_throughput_mbps * 1000  # MB for buffering
     elif input_params.expected_latency_seconds <= 5.0:
-        latency_memory_overhead = total_throughput_mb * 500   # Moderate buffering
+        latency_memory_overhead = total_throughput_mbps * 500   # Moderate buffering
     
     # Apply skew factor to memory - high skew requires more memory for hotspots
     total_memory_mb = (
@@ -138,8 +140,8 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     
     # CPU estimation (cores)
     # Base CPU + processing complexity + throughput factor + bandwidth considerations
-    base_cpu_cores = 2
-    throughput_cpu_factor = math.ceil(total_throughput_mb / 50)  # 1 core per 50MB/s
+    base_cpu_cores = BASE_CPU_CORES
+    throughput_cpu_factor = math.ceil(total_throughput_mbps / 50)  # 1 core per 50MB/s
     complexity_cpu = math.ceil(processing_load / 2)
     
     # Latency factor - stricter latency requirements need more resources
@@ -162,17 +164,17 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     taskmanager_cpu_cores = min(8, max(2, total_cpu_cores // 2))  # 2-8 cores per TM
     
     # Number of TaskManagers needed
-    num_taskmanagers = max(2, math.ceil(total_memory_mb / taskmanager_memory_mb))
+    num_taskmanagers = max(1, math.ceil(total_memory_mb / taskmanager_memory_mb))
     
     # JobManager specs (usually fixed)
     jobmanager_memory_mb = max(1024, min(4096, total_memory_mb // 8))
-    jobmanager_cpu_cores = 2
+    jobmanager_cpu_cores = BASE_CPU_CORES
     
     # Create Pydantic models for the result
     input_summary = InputSummary(
         messages_per_second=input_params.messages_per_second,
         avg_record_size_bytes=input_params.avg_record_size_bytes,
-        total_throughput_mb_per_sec=round(total_throughput_mb, 2),
+        total_throughput_mb_per_sec=round(total_throughput_mbps, 2),
         num_distinct_keys=input_params.num_distinct_keys,
         data_skew_risk=input_params.data_skew_risk,
         bandwidth_capacity_mbps=input_params.bandwidth_capacity_mbps,
@@ -190,15 +192,15 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     )
     
     jobmanager_config = JobManagerConfig(
-        memory_mb=jobmanager_memory_mb,
-        cpu_cores=jobmanager_cpu_cores
+        memory_mb=math.ceil(jobmanager_memory_mb),
+        cpu_cores=math.ceil(jobmanager_cpu_cores)
     )
     
     taskmanager_config = TaskManagerConfig(
         count=num_taskmanagers,
-        memory_mb_each=taskmanager_memory_mb,
+        memory_mb_each=math.ceil(taskmanager_memory_mb),
         cpu_cores_each=taskmanager_cpu_cores,
-        total_memory_mb=num_taskmanagers * taskmanager_memory_mb,
+        total_memory_mb=num_taskmanagers * math.ceil(taskmanager_memory_mb),
         total_cpu_cores=num_taskmanagers * taskmanager_cpu_cores
     )
     
@@ -261,7 +263,8 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         scaling_recommendations=scaling_recommendations
     )
     print("-"*80)
-    print(result.json())
+    print(result.model_dump_json(indent=2))
+    print("-"*80)
     return result
 
 

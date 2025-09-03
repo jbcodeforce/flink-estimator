@@ -6,11 +6,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: flink-estimator
+    image: jbcodeforce/flink-estimator:latest
     ports:
       - "8000:8000"
     volumes:
       # Mount saved estimations as a volume for persistence
-      - estimations_data:/app/saved_estimations
+      - ./saved_estimations:/app/saved_estimations
     environment:
       - PYTHONUNBUFFERED=1
     restart: unless-stopped
@@ -22,5 +23,5 @@ services:
       start_period: 40s
 
 volumes:
-  estimations_data:
-    driver: local 
+  saved_estimations:
+    driver: local

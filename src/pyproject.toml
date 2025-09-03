@@ -1,7 +1,10 @@
 [project]
 name = "flink-estimator"
+authors = [
+    {name = "jbcodeforce",email = "jboyer@confluent.io"}
+]
 version = "0.1.0"
-description = "Add your description here"
+description = "Flink CP estimator"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -10,3 +13,14 @@ dependencies = [
     "python-multipart>=0.0.20",
     "uvicorn>=0.35.0",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["flink_estimator*"]
+
+[tool.setuptools.package-data]
+flink_estimator = ["py.typed"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

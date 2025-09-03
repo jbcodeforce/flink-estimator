@@ -1,0 +1,23 @@
+{
+    "include": [
+        "src"
+    ],
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "src/dist"
+    ],
+    "extraPaths": [
+        "src"
+    ],
+    "pythonVersion": "3.11",
+    "pythonPlatform": "Darwin",
+    "executionEnvironments": [
+        {
+            "root": "src",
+            "extraPaths": [
+                "."
+            ]
+        }
+    ]
+}

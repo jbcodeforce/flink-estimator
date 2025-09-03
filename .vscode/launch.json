@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+    
+
+    {
+        "name": "Debugger Estimator: current file",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${file}",
+        "console": "integratedTerminal",
+        "cwd": "${fileDirname}",
+        "env": {
+            "PYTHONPATH": "${fileWorkspaceFolder}/src/:${fileWorkspaceFolder}/tests"
+          },
+           "python": "${workspaceFolder}/src/.venv/bin/python"
+    },
+]
+}
