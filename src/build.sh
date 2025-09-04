@@ -6,7 +6,7 @@ set -e
 # Configuration
 IMAGE_NAME="jbcodeforce/flink-estimator"
 IMAGE_TAG="${1:-latest}"
-REGISTRY="${REGISTRY:-}"
+REGISTRY="${REGISTRY:-docker.io}"
 
 echo "🚀 Building Flink Resource Estimator Docker Image"
 echo "Image: ${IMAGE_NAME}:${IMAGE_TAG}"
@@ -26,7 +26,7 @@ echo ""
 echo "🎯 Next steps:"
 echo "  Local testing:     docker-compose up"
 echo "  Push to registry:  docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
-echo "  Deploy to K8s:     kubectl apply -f k8s/"
+echo "  Deploy to K8s:     cd .. && kubectl apply -f k8s/"
 echo ""
 
 # Show image info

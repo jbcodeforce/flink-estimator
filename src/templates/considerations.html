@@ -7,18 +7,59 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>📋 Estimation Guide</h1>
-            <p class="subtitle">Understanding the principles and considerations behind Flink resource estimation</p>
-            <div class="header-nav">
-                <a href="/" class="nav-link">🏠 Home</a>
-                <a href="/estimation-form" class="nav-link">🧮 New Estimation</a>
-                <a href="/saved" class="nav-link">📂 Saved Estimations</a>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <a href="/" class="sidebar-brand">
+                    <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
+                    <h1>Flink Estimator</h1>
+                </a>
             </div>
-        </header>
+            <div class="sidebar-nav">
+                <div class="nav-item">
+                    <a href="/" class="nav-link">
+                        <span>🏠</span> Home
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/estimation-form" class="nav-link">
+                        <span>🧮</span> New Estimation
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/saved" class="nav-link">
+                        <span>📂</span> Saved Estimations
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/considerations" class="nav-link active">
+                        <span>📋</span> Estimation Guide
+                    </a>
+                </div>
+            </div>
+        </nav>
 
-        <main class="considerations-main">
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Top Header -->
+            <header class="top-header">
+                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+                <h1 class="header-title">Estimation Guide</h1>
+                <div class="header-actions">
+                    <button class="theme-toggle" onclick="toggleTheme()">
+                        <span class="theme-icon">🌙</span>
+                        <span class="theme-text">Dark</span>
+                    </button>
+                    <a href="/estimation-form" class="header-btn">🧮 New Estimation</a>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <div class="page-content">
+
+                    <main class="considerations-main">
             <div class="considerations-content">
                 <div class="consideration-section">
                     <h2>🎯 Core Performance Rule</h2>
@@ -125,17 +166,85 @@
                     🧮 Start New Estimation
                 </a>
             </div>
-        </main>
+                    </main>
 
-        <footer>
-            <div class="footer-content">
-                <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
-                <div class="footer-links">
-                    <a href="/docs" class="footer-link">📖 API Documentation</a>
-                    <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
+                    <footer>
+                        <div class="footer-content">
+                            <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
+                            <div class="footer-links">
+                                <a href="/docs" class="footer-link">📖 API Documentation</a>
+                                <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
+                            </div>
+                        </div>
+                    </footer>
                 </div>
             </div>
-        </footer>
+        </div>
     </div>
+
+    <!-- Sidebar Overlay for mobile -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <script>
+        // Sidebar and theme toggle functions
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+        }
+
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            
+            const themeIcon = document.querySelector('.theme-icon');
+            const themeText = document.querySelector('.theme-text');
+            
+            if (newTheme === 'dark') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+        }
+
+        function initializeTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+            
+            document.documentElement.setAttribute('data-theme', theme);
+            
+            const themeIcon = document.querySelector('.theme-icon');
+            const themeText = document.querySelector('.theme-text');
+            
+            if (theme === 'dark') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+        }
+
+        // Initialize theme on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initializeTheme();
+        });
+    </script>
 </body>
 </html>

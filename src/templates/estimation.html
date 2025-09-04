@@ -7,25 +7,59 @@
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <div class="header-brand">
-                <a href="/" class="logo-link">
-                    <img src="/static/flink_squirrel_100.png" alt="Apache Flink" class="logo">
-                    <div class="brand-text">
-                        <h1>Flink Resource Estimator</h1>
-                        <p class="subtitle">Configure your workload parameters and get resource recommendations</p>
-                    </div>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <nav class="sidebar">
+            <div class="sidebar-header">
+                <a href="/" class="sidebar-brand">
+                    <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
+                    <h1>Flink Estimator</h1>
                 </a>
             </div>
-            <div class="header-nav">
-                <a href="/" class="nav-link">🏠 Home</a>
-                <a href="/saved" class="nav-link">📂 Saved Estimations</a>
-                <a href="/considerations" class="nav-link">📋 Guide</a>
+            <div class="sidebar-nav">
+                <div class="nav-item">
+                    <a href="/" class="nav-link">
+                        <span>🏠</span> Home
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/estimation-form" class="nav-link active">
+                        <span>🧮</span> New Estimation
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/saved" class="nav-link">
+                        <span>📂</span> Saved Estimations
+                    </a>
+                </div>
+                <div class="nav-item">
+                    <a href="/considerations" class="nav-link">
+                        <span>📋</span> Estimation Guide
+                    </a>
+                </div>
             </div>
-        </header>
+        </nav>
 
-        <main>
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Top Header -->
+            <header class="top-header">
+                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+                <h1 class="header-title">Configure Your Workload</h1>
+                <div class="header-actions">
+                    <button class="theme-toggle" onclick="toggleTheme()">
+                        <span class="theme-icon">🌙</span>
+                        <span class="theme-text">Dark</span>
+                    </button>
+                    <a href="/saved" class="header-btn">📂 View Saved</a>
+                </div>
+            </header>
+
+            <!-- Content Area -->
+            <div class="content-area">
+                <div class="page-content">
+
+                    <main>
             <form action="/estimate" method="post" class="estimation-form">
                 <!-- Tab Navigation -->
                 <div class="tab-navigation">
@@ -278,23 +312,95 @@
                         💾 Save Configuration
                     </button>
                 </div>
-            </form>
-        </main>
+                    </form>
+                    </main>
 
-        <footer>
-            <div class="footer-content">
-                <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
-                <div class="footer-links">
-                    <a href="/docs" class="footer-link">📖 API Documentation</a>
-                    <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
+                    <footer>
+                        <div class="footer-content">
+                            <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
+                            <div class="footer-links">
+                                <a href="/docs" class="footer-link">📖 API Documentation</a>
+                                <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
+                            </div>
+                        </div>
+                    </footer>
                 </div>
             </div>
-        </footer>
+        </div>
     </div>
+
+    <!-- Sidebar Overlay for mobile -->
+    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+
+    <script>
+        // Sidebar toggle functionality for mobile
+        function toggleSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            
+            sidebar.classList.toggle('active');
+            overlay.classList.toggle('active');
+        }
+
+        function closeSidebar() {
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.querySelector('.sidebar-overlay');
+            
+            sidebar.classList.remove('active');
+            overlay.classList.remove('active');
+        }
+
+        // Theme toggle functionality
+        function toggleTheme() {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('theme', newTheme);
+            
+            // Update button text and icon
+            const themeIcon = document.querySelector('.theme-icon');
+            const themeText = document.querySelector('.theme-text');
+            
+            if (newTheme === 'dark') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+        }
+
+        // Initialize theme on page load
+        function initializeTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = savedTheme || (prefersDark ? 'dark' : 'light');
+            
+            document.documentElement.setAttribute('data-theme', theme);
+            
+            // Update button to match current theme
+            const themeIcon = document.querySelector('.theme-icon');
+            const themeText = document.querySelector('.theme-text');
+            
+            if (theme === 'dark') {
+                themeIcon.textContent = '☀️';
+                themeText.textContent = 'Light';
+            } else {
+                themeIcon.textContent = '🌙';
+                themeText.textContent = 'Dark';
+            }
+        }
+
+        // Existing JavaScript starts here
+    </script>
 
     <script>
         // Tab functionality
         document.addEventListener('DOMContentLoaded', function() {
+            // Initialize theme
+            initializeTheme();
+            
             const tabButtons = document.querySelectorAll('.tab-button');
             const tabContents = document.querySelectorAll('.tab-content');
 
