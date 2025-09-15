@@ -292,42 +292,6 @@ async def reload_estimation(request: Request, filename: str):
         )
 
 
-@app.get("/debug/static-files")
-async def debug_static_files():
-    """Debug endpoint to check static files availability."""
-    try:
-        static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
-        
-        debug_info = {
-            "current_working_directory": os.getcwd(),
-            "main_file_location": __file__,
-            "main_file_directory": os.path.dirname(__file__),
-            "static_directory_path": static_dir,
-            "static_directory_exists": os.path.exists(static_dir),
-            "static_files": []
-        }
-        
-        if os.path.exists(static_dir):
-            debug_info["static_files"] = os.listdir(static_dir)
-            # Check specific squirrel image
-            squirrel_path = os.path.join(static_dir, "flink_squirrel_100.png")
-            debug_info["squirrel_image_exists"] = os.path.exists(squirrel_path)
-            if os.path.exists(squirrel_path):
-                debug_info["squirrel_image_size"] = os.path.getsize(squirrel_path)
-            
-            # Check CSS file
-            css_path = os.path.join(static_dir, "style.css")
-            debug_info["css_file_exists"] = os.path.exists(css_path)
-            if os.path.exists(css_path):
-                debug_info["css_file_size"] = os.path.getsize(css_path)
-        
-        return JSONResponse(debug_info)
-        
-    except Exception as e:
-        return JSONResponse({
-            "error": str(e),
-            "message": "Error checking static files"
-        }, status_code=500)
 
 
 @app.get("/saved-estimations")
