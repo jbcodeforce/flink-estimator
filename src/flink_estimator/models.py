@@ -56,6 +56,7 @@ class ResourceEstimates(BaseModel):
     """Estimated resource requirements"""
     total_memory_mb: int
     total_cpu_cores: int
+    total_nodes: int
     processing_load_score: float
 
 

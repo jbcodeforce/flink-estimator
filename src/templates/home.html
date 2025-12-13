@@ -1,233 +1,85 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flink Resource Estimator</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <div class="app-layout">
-        <!-- Sidebar -->
-        <nav class="sidebar">
-            <div class="sidebar-header">
-                <a href="/" class="sidebar-brand">
-                    <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
-                    <h1>Flink Estimator</h1>
-                </a>
-            </div>
-            <div class="sidebar-nav">
-                <div class="nav-item">
-                    <a href="/" class="nav-link active">
-                        <span>🏠</span> Home
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/estimation-form" class="nav-link">
-                        <span>🧮</span> New Estimation
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/saved" class="nav-link">
-                        <span>📂</span> Saved Estimations
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/considerations" class="nav-link">
-                        <span>📋</span> Estimation Guide
-                    </a>
-                </div>
-            </div>
-        </nav>
+{% extends "base.html" %}
 
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Top Header -->
-            <header class="top-header">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
-                <h1 class="header-title">Flink Resource Estimator</h1>
-                <div class="header-actions">
-                    <button class="theme-toggle" onclick="toggleTheme()">
-                        <span class="theme-icon">🌙</span>
-                        <span class="theme-text">Dark</span>
-                    </button>
-                    <a href="/estimation-form" class="header-btn">🧮 Start Estimation</a>
-                </div>
-            </header>
+{% block title %}Flink Estimator{% endblock %}
 
-            <!-- Content Area -->
-            <div class="content-area">
-                <div class="page-content">
+{% block header_title %}Flink Resource Estimator{% endblock %}
 
-                    <main class="home-main">
-            <div class="tiles-container">
-                <div class="tile" onclick="window.location.href='/estimation-form'">
-                    <div class="tile-icon">🧮</div>
-                    <h2 class="tile-title">Start New Estimation</h2>
-                    <p class="tile-description">
-                        Configure your workload parameters and get resource recommendations for your Flink cluster
-                    </p>
-                    <div class="tile-action">
-                        <span class="action-text">Begin Analysis →</span>
-                    </div>
-                </div>
+{% block header_button %}
+<a href="/estimation-form" class="header-btn">🧮 Start Estimation</a>
+{% endblock %}
 
-                <div class="tile" onclick="window.location.href='/saved'">
-                    <div class="tile-icon">📂</div>
-                    <h2 class="tile-title">View Saved Estimations</h2>
-                    <p class="tile-description">
-                        Access and review your previously saved estimation configurations and results
-                    </p>
-                    <div class="tile-action">
-                        <span class="action-text">Browse Files →</span>
-                    </div>
-                </div>
+{% block main_class %}class="home-main"{% endblock %}
 
-                <div class="tile" onclick="window.location.href='/considerations'">
-                    <div class="tile-icon">📋</div>
-                    <h2 class="tile-title">Estimation Guide</h2>
-                    <p class="tile-description">
-                        Learn about the principles, assumptions, and best practices behind resource estimation
-                    </p>
-                    <div class="tile-action">
-                        <span class="action-text">Read More →</span>
-                    </div>
-                </div>
-            </div>
-
-            <div class="welcome-section">
-                <div class="welcome-content">
-                    <h2>Welcome to Flink Resource Estimator</h2>
-                    <p>
-                        This tool helps you determine the optimal cluster size for your Apache Flink workloads. 
-                        By analyzing your data throughput, statement complexity, and performance requirements, 
-                        we provide tailored recommendations for CPU, memory, and cluster configuration.
-                    </p>
-                    
-                    <div class="features-grid">
-                        <div class="feature">
-                            <div class="feature-icon">⚡</div>
-                            <h3>Performance Focused</h3>
-                            <p>Optimized for high-throughput streaming workloads</p>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon">🎯</div>
-                            <h3>Accurate Estimations</h3>
-                            <p>Based on real-world Flink performance metrics</p>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon">🔧</div>
-                            <h3>Configurable</h3>
-                            <p>Customize parameters for your specific use case</p>
-                        </div>
-                        <div class="feature">
-                            <div class="feature-icon">💾</div>
-                            <h3>Save & Share</h3>
-                            <p>Save configurations and share with your team</p>
-                        </div>
-                    </div>
-
-                    <div class="cta-section">
-                        <p class="cta-text">Ready to optimize your Flink cluster?</p>
-                        <a href="/estimation-form" class="cta-button">
-                            🧮 Start Your First Estimation
-                        </a>
-                    </div>
-                </div>
-            </div>
-                    </main>
-
-                    <footer>
-                        <div class="footer-content">
-                            <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
-                            <div class="footer-links">
-                                <a href="/docs" class="footer-link">📖 API Documentation</a>
-                                <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
-                            </div>
-                        </div>
-                    </footer>
-                </div>
-            </div>
+{% block content %}
+<div class="tiles-container">
+    <div class="tile" onclick="window.location.href='/estimation-form'">
+        <div class="tile-icon">🧮</div>
+        <h2 class="tile-title">Start New Estimation</h2>
+        <p class="tile-description">
+            Configure your workload parameters and get resource recommendations for your Flink cluster
+        </p>
+        <div class="tile-action">
+            <span class="action-text">Begin Analysis →</span>
         </div>
     </div>
 
-    <!-- Sidebar Overlay for mobile -->
-    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="tile" onclick="window.location.href='/saved'">
+        <div class="tile-icon">📂</div>
+        <h2 class="tile-title">View Saved Estimations</h2>
+        <p class="tile-description">
+            Access and review your previously saved estimation configurations and results
+        </p>
+        <div class="tile-action">
+            <span class="action-text">Browse Files →</span>
+        </div>
+    </div>
 
-    <script>
-        // Add hover effects for tiles
-        document.addEventListener('DOMContentLoaded', function() {
-            const tiles = document.querySelectorAll('.tile');
+    <div class="tile" onclick="window.location.href='/considerations'">
+        <div class="tile-icon">📋</div>
+        <h2 class="tile-title">Estimation Guide</h2>
+        <p class="tile-description">
+            Learn about the principles, assumptions, and best practices behind resource estimation
+        </p>
+        <div class="tile-action">
+            <span class="action-text">Read More →</span>
+        </div>
+    </div>
+</div>
+
+<div class="welcome-section">
+    <div class="welcome-content">
+        <h2>Welcome to Flink Resource Estimator</h2>
+        <p>
+            This tool helps you determine the optimal cluster size for your Apache Flink workloads. 
+            By analyzing your data throughput, statement complexity, and performance requirements, 
+            we provide tailored recommendations for CPU, memory, and cluster configuration.
+        </p>
+
+        <div class="cta-section">
+            <p class="cta-text">Ready to optimize your Flink cluster?</p>
+            <a href="/estimation-form" class="cta-button">
+                Start Your First Estimation
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    // Add hover effects for tiles
+    document.addEventListener('DOMContentLoaded', function() {
+        const tiles = document.querySelectorAll('.tile');
+        
+        tiles.forEach(tile => {
+            tile.addEventListener('mouseenter', function() {
+                this.style.transform = 'translateY(-5px)';
+            });
             
-            tiles.forEach(tile => {
-                tile.addEventListener('mouseenter', function() {
-                    this.style.transform = 'translateY(-5px)';
-                });
-                
-                tile.addEventListener('mouseleave', function() {
-                    this.style.transform = 'translateY(0)';
-                });
+            tile.addEventListener('mouseleave', function() {
+                this.style.transform = 'translateY(0)';
             });
         });
-
-        // Sidebar toggle functionality for mobile
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.toggle('active');
-            overlay.classList.toggle('active');
-        }
-
-        function closeSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.remove('active');
-            overlay.classList.remove('active');
-        }
-
-        // Theme toggle functionality
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            
-            // Update button text and icon
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (newTheme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        }
-
-        // Initialize theme on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            const savedTheme = localStorage.getItem('theme');
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            const theme = savedTheme || (prefersDark ? 'dark' : 'light');
-            
-            document.documentElement.setAttribute('data-theme', theme);
-            
-            // Update button to match current theme
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (theme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        });
-    </script>
-</body>
-</html>
+    });
+</script>
+{% endblock %}

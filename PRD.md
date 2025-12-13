@@ -55,7 +55,7 @@ Accurately estimating the resources (CPU, memory, parallelism) for an Apache Fli
 
 ## 7. Future Work
 
-*   **Advanced Estimation Models:** Incorporate machine learning models to improve the accuracy of the estimations based on historical data.
+*   **Estimation Models:** Incorporate machine learning models to improve the accuracy of the estimations based on historical data.
 *   **Integration with Monitoring Systems:** Integrate with monitoring systems like Prometheus to gather real-time metrics from Flink clusters and use them to refine the estimations.
 *   **Support for Different Deployment Modes:** Add support for different Flink deployment modes, such as YARN and Mesos.
 *   **User Authentication:** Implement user authentication and authorization to provide a personalized experience and secure access to saved estimations.

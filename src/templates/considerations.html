@@ -1,250 +1,120 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flink Resource Estimator - Estimation Guide</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <div class="app-layout">
-        <!-- Sidebar -->
-        <nav class="sidebar">
-            <div class="sidebar-header">
-                <a href="/" class="sidebar-brand">
-                    <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
-                    <h1>Flink Estimator</h1>
-                </a>
-            </div>
-            <div class="sidebar-nav">
-                <div class="nav-item">
-                    <a href="/" class="nav-link">
-                        <span>🏠</span> Home
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/estimation-form" class="nav-link">
-                        <span>🧮</span> New Estimation
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/saved" class="nav-link">
-                        <span>📂</span> Saved Estimations
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/considerations" class="nav-link active">
-                        <span>📋</span> Estimation Guide
-                    </a>
-                </div>
-            </div>
-        </nav>
+{% extends "base.html" %}
 
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Top Header -->
-            <header class="top-header">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
-                <h1 class="header-title">Estimation Guide</h1>
-                <div class="header-actions">
-                    <button class="theme-toggle" onclick="toggleTheme()">
-                        <span class="theme-icon">🌙</span>
-                        <span class="theme-text">Dark</span>
-                    </button>
-                    <a href="/estimation-form" class="header-btn">🧮 New Estimation</a>
-                </div>
-            </header>
+{% block title %}Flink Resource Estimator - Estimation Guide{% endblock %}
 
-            <!-- Content Area -->
-            <div class="content-area">
-                <div class="page-content">
+{% block header_title %}Estimation Guide{% endblock %}
 
-                    <main class="considerations-main">
-            <div class="considerations-content">
-                <div class="consideration-section">
-                    <h2>🎯 Core Performance Rule</h2>
-                    <div class="principle">
-                        <p><strong>Flink can process ~10,000 records per second per CPU core</strong></p>
-                        <p class="note">This baseline may decrease with larger messages, bigger state, key skew, or high number of distinct keys.</p>
-                    </div>
-                </div>
+{% block header_button %}
+<a href="/estimation-form" class="header-btn">🧮 New Estimation</a>
+{% endblock %}
 
-                <div class="consideration-section">
-                    <h2>⚙️ Flink SQL query Complexity Impact</h2>
-                    <div class="principle">
-                        <p>SQL query complexity reflects the usage of complex operators like:</p>
-                        <ul>
-                            <li>Joins between multiple streams</li>
-                            <li>Windowed aggregations</li>
-                            <li>Complex analytics functions</li>
-                        </ul>
-                        <p class="note">More complex operations require additional CPU and memory resources.</p>
-                    </div>
-                </div>
+{% block main_class %}class="considerations-main"{% endblock %}
 
-                <div class="consideration-section">
-                    <h2>🏗️ Architecture Assumptions</h2>
-                    <div class="principle">
-                        <ul>
-                            <li><strong>Source & Sink latency:</strong> Assumed to be minimal</li>
-                            <li><strong>Key size:</strong> Assumed to be small (few bytes)</li>
-                            <li><strong>Minimum cluster size:</strong> 3 nodes required</li>
-                            <li><strong>CPU limit:</strong> Maximum 8 CPU cores per Flink node</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="consideration-section">
-                    <h2>💾 State Management & Checkpointing</h2>
-                    <div class="principle">
-                        <ul>
-                            <li><strong>Working State:</strong> Kept locally in RocksDB</li>
-                            <li><strong>Backup:</strong> State backed up to distributed storage</li>
-                            <li><strong>Recovery:</strong> Checkpoint size affects recovery time</li>
-                            <li><strong>Frequency:</strong> Checkpoint interval determines state capture frequency</li>
-                        </ul>
-                        <p class="note">Aggregate state size consumes bandwidth and impacts recovery latency.</p>
-                    </div>
-                </div>
-
-                <div class="consideration-section">
-                    <h2>📊 Resource Guidelines</h2>
-                    <div class="principle">
-                        <p><strong>Typical Flink node configuration:</strong></p>
-                        <ul>
-                            <li>4 CPU cores with 16GB memory</li>
-                            <li>Should process 20-50 MB/s of data</li>
-                            <li>Jobs with significant state benefit from more memory</li>
-                        </ul>
-                        <p class="highlight">💡 <strong>Scaling Strategy:</strong> Scale vertically before horizontally</p>
-                    </div>
-                </div>
-
-                <div class="consideration-section">
-                    <h2>⏱️ Latency Impact on Resources</h2>
-                    <div class="principle">
-                        <p><strong>Lower latency requirements significantly increase resource needs:</strong></p>
-                        <ul>
-                            <li><strong>Sub-500ms latency:</strong> +50% CPU, frequent checkpoints (10s), boosted parallelism</li>
-                            <li><strong>Sub-1s latency:</strong> +20% CPU, extra buffering memory, 30s checkpoints</li>
-                            <li><strong>Sub-5s latency:</strong> +10% CPU, moderate buffering, 60s checkpoints</li>
-                            <li><strong>Relaxed latency (>5s):</strong> Standard resource allocation</li>
-                        </ul>
-                        <p class="note">Stricter latency requires more frequent checkpoints for faster recovery, additional memory for buffering, and extra CPU for low-latency optimizations.</p>
-                    </div>
-                </div>
-
-                <div class="consideration-section">
-                    <h2>🎯 Estimation Heuristics</h2>
-                    <div class="principle">
-                        <p>The estimator increases task managers until there are sufficient resources for:</p>
-                        <ul>
-                            <li>Expected throughput requirements</li>
-                            <li>Latency-appropriate checkpoint intervals</li>
-                            <li>Acceptable recovery times</li>
-                            <li>Handling data skew and key distribution</li>
-                        </ul>
-                    </div>
-                </div>
-
-                <div class="consideration-section warning">
-                    <h2>⚠️ Important Notes</h2>
-                    <div class="principle">
-                        <ul>
-                            <li>These are <strong>estimates</strong> - always test with your actual workload</li>
-                            <li>Start with conservative estimates and adjust based on testing</li>
-                            <li>Monitor your cluster performance and tune as needed</li>
-                            <li>Consider your specific data patterns and business requirements</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
-            <div class="cta-section">
-                <p class="cta-text">Ready to create an estimation?</p>
-                <a href="/estimation-form" class="cta-button">
-                    🧮 Start New Estimation
-                </a>
-            </div>
-                    </main>
-
-                    <footer>
-                        <div class="footer-content">
-                            <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
-                            <div class="footer-links">
-                                <a href="/docs" class="footer-link">📖 API Documentation</a>
-                                <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
-                            </div>
-                        </div>
-                    </footer>
-                </div>
-            </div>
+{% block content %}
+<div class="considerations-content">
+    <div class="consideration-section">
+        <h2>Core Performance Rule</h2>
+        <div class="principle">
+            <p><strong>Flink can process ~10,000 records per second per CPU core</strong></p>
+            <p class="note">This baseline may decrease with larger messages, bigger state, key skew, or high number of distinct keys.</p>
         </div>
     </div>
 
-    <!-- Sidebar Overlay for mobile -->
-    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <div class="consideration-section">
+        <h2>Flink SQL query Complexity Impact</h2>
+        <div class="principle">
+            <p>SQL query complexity reflects the usage of complex operators like:</p>
+            <ul>
+                <li>Joins between multiple streams</li>
+                <li>Windowed aggregations</li>
+                <li>Complex analytics functions</li>
+            </ul>
+            <p class="note">More complex operations require additional CPU and memory resources.</p>
+        </div>
+    </div>
 
-    <script>
-        // Sidebar and theme toggle functions
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.toggle('active');
-            overlay.classList.toggle('active');
-        }
+    <div class="consideration-section">
+        <h2>Architecture Assumptions</h2>
+        <div class="principle">
+            <ul>
+                <li><strong>Source & Sink latency:</strong> Assumed to be minimal</li>
+                <li><strong>Key size:</strong> Assumed to be small (few bytes)</li>
+                <li><strong>Minimum cluster size:</strong> 3 nodes required</li>
+                <li><strong>CPU limit:</strong> Maximum 8 CPU cores per Flink node</li>
+            </ul>
+        </div>
+    </div>
 
-        function closeSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.remove('active');
-            overlay.classList.remove('active');
-        }
+    <div class="consideration-section">
+        <h2>State Management & Checkpointing</h2>
+        <div class="principle">
+            <ul>
+                <li><strong>Working State:</strong> Kept locally in RocksDB</li>
+                <li><strong>Backup:</strong> State backed up to distributed storage</li>
+                <li><strong>Recovery:</strong> Checkpoint size affects recovery time</li>
+                <li><strong>Frequency:</strong> Checkpoint interval determines state capture frequency</li>
+            </ul>
+            <p class="note">Aggregate state size consumes bandwidth and impacts recovery latency.</p>
+        </div>
+    </div>
 
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (newTheme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        }
+    <div class="consideration-section">
+        <h2>Resource Guidelines</h2>
+        <div class="principle">
+            <p><strong>Typical Flink node configuration:</strong></p>
+            <ul>
+                <li>4 CPU cores with 16GB memory</li>
+                <li>Should process 20-50 MB/s of data</li>
+                <li>Jobs with significant state benefit from more memory</li>
+            </ul>
+            <p class="highlight">💡 <strong>Scaling Strategy:</strong> Scale vertically before horizontally</p>
+        </div>
+    </div>
 
-        function initializeTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            const theme = savedTheme || (prefersDark ? 'dark' : 'light');
-            
-            document.documentElement.setAttribute('data-theme', theme);
-            
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (theme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        }
+    <div class="consideration-section">
+        <h2>Latency Impact on Resources</h2>
+        <div class="principle">
+            <p><strong>Lower latency requirements significantly increase resource needs:</strong></p>
+            <ul>
+                <li><strong>Sub-500ms latency:</strong> +50% CPU, frequent checkpoints (10s), boosted parallelism</li>
+                <li><strong>Sub-1s latency:</strong> +20% CPU, extra buffering memory, 30s checkpoints</li>
+                <li><strong>Sub-5s latency:</strong> +10% CPU, moderate buffering, 60s checkpoints</li>
+                <li><strong>Relaxed latency (>5s):</strong> Standard resource allocation</li>
+            </ul>
+            <p class="note">Stricter latency requires more frequent checkpoints for faster recovery, additional memory for buffering, and extra CPU for low-latency optimizations.</p>
+        </div>
+    </div>
 
-        // Initialize theme on page load
-        document.addEventListener('DOMContentLoaded', function() {
-            initializeTheme();
-        });
-    </script>
-</body>
-</html>
+    <div class="consideration-section">
+        <h2>Estimation Heuristics</h2>
+        <div class="principle">
+            <p>The estimator increases task managers until there are sufficient resources for:</p>
+            <ul>
+                <li>Expected throughput requirements</li>
+                <li>Latency-appropriate checkpoint intervals</li>
+                <li>Acceptable recovery times</li>
+                <li>Handling data skew and key distribution</li>
+            </ul>
+        </div>
+    </div>
+
+    <div class="consideration-section warning">
+        <h2>⚠️ Important Notes</h2>
+        <div class="principle">
+            <ul>
+                <li>These are <strong>estimates</strong> - always test with your actual workload</li>
+                <li>Start with conservative estimates and adjust based on testing</li>
+                <li>Monitor your cluster performance and tune as needed</li>
+                <li>Consider your specific data patterns and business requirements</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<div class="cta-section">
+    <p class="cta-text">Ready to create an estimation?</p>
+    <a href="/estimation-form" class="cta-button">
+        Start New Estimation
+    </a>
+</div>
+{% endblock %}

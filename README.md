@@ -67,7 +67,7 @@ docker build -t flink-estimator .
 
 # Run the container
 docker run -d \
-  --name jbcodeforce/flink-estimator \
+  --name flink-estimator \
   -p 8000:8000 \
   -v flink_estimations:/app/saved_estimations \
   flink-estimator
@@ -90,7 +90,7 @@ docker stop flink-estimator && docker rm flink-estimator
 
 ```bash
 # Apply all manifests
-kubectl apply -f k8s/
+kubectl apply -k k8s/
 
 # Check deployment status
 kubectl get pods -l app=flink-estimator
@@ -102,15 +102,10 @@ kubectl get services
 # Application will be available at: http://<node-ip>:30800
 ```
 
-### Using Kustomize
-
-```bash
-# Deploy using kustomize
-kubectl apply -k k8s/
-
-# Delete deployment
-kubectl delete -k k8s/
-```
+* Delete deployment
+  ```bash
+  kubectl delete -k k8s/
+  ```
 
 ### Accessing the Application
 

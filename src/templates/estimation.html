@@ -1,462 +1,285 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flink Resource Estimator - New Estimation</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <div class="app-layout">
-        <!-- Sidebar -->
-        <nav class="sidebar">
-            <div class="sidebar-header">
-                <a href="/" class="sidebar-brand">
-                    <img src="/static/flink_squirrel_100.png" alt="Flink Logo" class="logo">
-                    <h1>Flink Estimator</h1>
-                </a>
+{% extends "base.html" %}
+
+{% block title %}Flink Estimator{% endblock %}
+
+{% block header_title %}Configure Your Workload{% endblock %}
+
+{% block header_button %}
+<a href="/saved" class="header-btn">📂 View Saved</a>
+{% endblock %}
+
+{% block content %}
+<form action="/estimate" method="post" class="estimation-form">
+    <!-- Tab Navigation -->
+    <div class="tab-navigation">
+        <button type="button" class="tab-button active" data-tab="project-workload">
+            Project & Workload
+        </button>
+        <button type="button" class="tab-button" data-tab="network-hardware">
+            Network & Hardware
+        </button>
+        <button type="button" class="tab-button" data-tab="statement-complexity">
+            Flink SQL query Complexity
+        </button>
+    </div>
+
+    <!-- Tab 1: Project & Workload -->
+    <div class="tab-content active" id="project-workload">
+        <div class="form-section">
+            <h2>Project Information</h2>
+            <div class="form-group">
+                <label for="project_name">Project Name:</label>
+                <input type="text" id="project_name" name="project_name" required
+                    placeholder="Enter your project name">
             </div>
-            <div class="sidebar-nav">
-                <div class="nav-item">
-                    <a href="/" class="nav-link">
-                        <span>🏠</span> Home
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/estimation-form" class="nav-link active">
-                        <span>🧮</span> New Estimation
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/saved" class="nav-link">
-                        <span>📂</span> Saved Estimations
-                    </a>
-                </div>
-                <div class="nav-item">
-                    <a href="/considerations" class="nav-link">
-                        <span>📋</span> Estimation Guide
-                    </a>
-                </div>
+        </div>
+
+        <div class="form-section">
+            <h2>Workload Characteristics</h2>
+
+            <div class="form-group">
+                <label for="messages_per_second">Expected Messages per Second:</label>
+                <input type="number" id="messages_per_second" name="messages_per_second"
+                    required min="1" placeholder="10000" value="10000">
+                <div class="help-text">The expected throughput of messages your Flink job will
+                    process</div>
             </div>
-        </nav>
 
-        <!-- Main Content -->
-        <div class="main-content">
-            <!-- Top Header -->
-            <header class="top-header">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
-                <h1 class="header-title">Configure Your Workload</h1>
-                <div class="header-actions">
-                    <button class="theme-toggle" onclick="toggleTheme()">
-                        <span class="theme-icon">🌙</span>
-                        <span class="theme-text">Dark</span>
-                    </button>
-                    <a href="/saved" class="header-btn">📂 View Saved</a>
-                </div>
-            </header>
+            <div class="form-group">
+                <label for="avg_record_size_bytes">Average Record Size (bytes):</label>
+                <input type="number" id="avg_record_size_bytes" name="avg_record_size_bytes"
+                    required min="1" placeholder="1024" value="1024">
+                <div class="help-text">Average size of each message/record in bytes</div>
+            </div>
 
-            <!-- Content Area -->
-            <div class="content-area">
-                <div class="page-content">
+            <div class="form-group">
+                <label for="expected_latency_seconds">Expected Latency (seconds):</label>
+                <input type="number" id="expected_latency_seconds"
+                    name="expected_latency_seconds" step="0.1" min="0.1" value="1.0"
+                    placeholder="e.g., 1.0">
+                <div class="help-text">Expected end-to-end processing latency in seconds</div>
+            </div>
 
-                    <main>
-            <form action="/estimate" method="post" class="estimation-form">
-                <!-- Tab Navigation -->
-                <div class="tab-navigation">
-                    <button type="button" class="tab-button active" data-tab="project-workload">
-                        📊 Project & Workload
-                    </button>
-                    <button type="button" class="tab-button" data-tab="network-hardware">
-                        🌐 Network & Hardware
-                    </button>
-                    <button type="button" class="tab-button" data-tab="statement-complexity">
-                        ⚙️ Flink SQL query Complexity
-                    </button>
-                </div>
+            <div class="form-group">
+                <label for="num_distinct_keys">Number of Distinct Keys:</label>
+                <input type="number" id="num_distinct_keys" name="num_distinct_keys" required
+                    min="1" value="100000" placeholder="e.g., 1000000" value="100000">
+                <div class="help-text">Number of distinct partition keys (affects parallelism
+                    and state distribution)</div>
+            </div>
 
-                <!-- Tab 1: Project & Workload -->
-                <div class="tab-content active" id="project-workload">
-                    <div class="form-section">
-                        <h2>Project Information</h2>
-                        <div class="form-group">
-                            <label for="project_name">Project Name:</label>
-                            <input 
-                                type="text" 
-                                id="project_name" 
-                                name="project_name" 
-                                required 
-                                placeholder="Enter your project name"
-                            >
-                        </div>
-                    </div>
+            <div class="form-group">
+                <label for="data_skew_risk">Data Skew Risk:</label>
+                <select id="data_skew_risk" name="data_skew_risk" required>
+                    <option value="low" selected>Low - Data is evenly distributed across keys</option>
+                    <option value="medium">Medium - Some keys have more data than
+                        others</option>
+                    <option value="high">High - Significant data concentration on few keys
+                    </option>
+                </select>
+                <div class="help-text">Risk of uneven data distribution which can cause hotspots
+                    and performance issues</div>
+            </div>
 
-                    <div class="form-section">
-                        <h2>Workload Characteristics</h2>
-                        
-                        <div class="form-group">
-                            <label for="messages_per_second">Expected Messages per Second:</label>
-                            <input 
-                                type="number" 
-                                id="messages_per_second" 
-                                name="messages_per_second" 
-                                required 
-                                min="1"
-                                placeholder="e.g., 10000"
-                            >
-                            <div class="help-text">The expected throughput of messages your Flink job will process</div>
-                        </div>
+            <!-- Navigation Button -->
+            <div class="tab-navigation-buttons">
+                <button type="button" class="cta-button"
+                    onclick="switchToTab('network-hardware')">
+                    Next: Network & Hardware →
+                </button>
+            </div>
 
-                        <div class="form-group">
-                            <label for="avg_record_size_bytes">Average Record Size (bytes):</label>
-                            <input 
-                                type="number" 
-                                id="avg_record_size_bytes" 
-                                name="avg_record_size_bytes" 
-                                required 
-                                min="1"
-                                placeholder="e.g., 1024"
-                            >
-                            <div class="help-text">Average size of each message/record in bytes</div>
-                        </div>
+        </div>
+    </div>
 
-                        <div class="form-group">
-                            <label for="expected_latency_seconds">Expected Latency (seconds):</label>
-                            <input 
-                                type="number" 
-                                id="expected_latency_seconds" 
-                                name="expected_latency_seconds" 
-                                step="0.1"
-                                min="0.1"
-                                value="1.0"
-                                placeholder="e.g., 1.0"
-                            >
-                            <div class="help-text">Expected end-to-end processing latency in seconds</div>
-                        </div>
+    <!-- Tab 2: Network & Hardware -->
+    <div class="tab-content" id="network-hardware">
+        <div class="form-section">
+            <h2>Network Configuration</h2>
 
-                        <div class="form-group">
-                            <label for="num_distinct_keys">Number of Distinct Keys:</label>
-                            <input 
-                                type="number" 
-                                id="num_distinct_keys" 
-                                name="num_distinct_keys" 
-                                required 
-                                min="1"
-                                value="100000"
-                                placeholder="e.g., 1000000"
-                            >
-                            <div class="help-text">Number of distinct partition keys (affects parallelism and state distribution)</div>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="data_skew_risk">Data Skew Risk:</label>
-                            <select 
-                                id="data_skew_risk" 
-                                name="data_skew_risk" 
-                                required
-                            >
-                                <option value="low">Low - Data is evenly distributed across keys</option>
-                                <option value="medium" selected>Medium - Some keys have more data than others</option>
-                                <option value="high">High - Significant data concentration on few keys</option>
-                            </select>
-                            <div class="help-text">Risk of uneven data distribution which can cause hotspots and performance issues</div>
-                        </div>
-
-                        <!-- Navigation Button -->
-                        <div class="tab-navigation-buttons">
-                            <button type="button" class="btn-next" onclick="switchToTab('network-hardware')">
-                                Next: Network & Hardware →
-                            </button>
-                        </div>
-  
-                    </div>
-                </div>
-
-                <!-- Tab 2: Network & Hardware -->
-                <div class="tab-content" id="network-hardware">
-                    <div class="form-section">
-                        <h2>Network Configuration</h2>
-                        
-                        <div class="form-group">
-                            <label for="bandwidth_capacity_mbps">Network Bandwidth Capacity (Mbps):</label>
-                            <input 
-                                type="number" 
-                                id="bandwidth_capacity_mbps" 
-                                name="bandwidth_capacity_mbps" 
-                                required 
-                                min="1"
-                                value="1000"
-                                placeholder="e.g., 1000"
-                            >
-                            <div class="help-text">Available network bandwidth for data transfer (affects throughput limits)</div>
-                        </div>
-                    </div>
+            <div class="form-group">
+                <label for="bandwidth_capacity_mbps">Network Bandwidth Capacity (Mbps):</label>
+                <input type="number" id="bandwidth_capacity_mbps" name="bandwidth_capacity_mbps"
+                    required min="1" value="1000" placeholder="e.g., 1000" value="1000">
+                <div class="help-text">Available network bandwidth for data transfer (affects
+                    throughput limits)</div>
+            </div>
+        </div>
 
 
 
-                    <div class="form-section">
-                        <h2>Hardware Considerations</h2>
-                        <div class="info-box">
-                            <h3>💡 Hardware Recommendations</h3>
-                            <ul>
-                                <li><strong>CPU:</strong> Ensure sufficient cores for parallel processing</li>
-                                <li><strong>Memory:</strong> Adequate RAM for state management and buffering</li>
-                                <li><strong>Storage:</strong> Fast I/O for checkpointing and state backends</li>
-                                <li><strong>Network:</strong> High bandwidth for inter-node communication</li>
-                            </ul>
-                        </div>
-                        
-                        <!-- Navigation Buttons -->
-                        <div class="tab-navigation-buttons">
-                            <button type="button" class="btn-previous" onclick="switchToTab('project-workload')">
-                                ← Previous: Project & Workload
-                            </button>
-                            <button type="button" class="btn-next" onclick="switchToTab('statement-complexity')">
-                                Next: SQL Queries Complexity →
-                            </button>
-                        </div>
-                    </div>
-                </div>
+        <div class="form-section">
+            <h2>Hardware Considerations</h2>
+            <div class="info-box">
+                <h3>💡 Hardware Recommendations</h3>
+                <ul>
+                    <li><strong>CPU:</strong> Ensure sufficient cores for parallel processing
+                    </li>
+                    <li><strong>Memory:</strong> Adequate RAM for state management and buffering
+                    </li>
+                    <li><strong>Storage:</strong> Fast I/O for checkpointing and state backends
+                    </li>
+                    <li><strong>Network:</strong> High bandwidth for inter-node communication
+                    </li>
+                </ul>
+            </div>
 
-                <!-- Tab 3: SQL Queries Complexity -->
-                <div class="tab-content" id="statement-complexity">
-                    <div class="form-section">
-                        <h2>Flink SQL Queries Complexity</h2>
-                        <p class="section-description">
-                            Categorize your Flink SQL queries by complexity. This helps estimate processing overhead.
-                        </p>
-                        
-                        <div class="complexity-grid">
-                            <div class="complexity-item">
-                                <h3>Simple SQL Queries</h3>
-                                <p>SELECT, basic WHERE clauses, simple projections</p>
-                                <input 
-                                    type="number" 
-                                    id="simple_statements" 
-                                    name="simple_statements" 
-                                    min="0" 
-                                    value="0"
-                                    placeholder="0"
-                                >
-                                <div class="complexity-examples">
-                                    <strong>Examples:</strong>
-                                    <ul>
-                                        <li>SELECT id, name FROM users</li>
-                                        <li>WHERE status = 'active'</li>
-                                        <li>Basic field filtering</li>
-                                    </ul>
-                                </div>
-                            </div>
-
-                            <div class="complexity-item">
-                                <h3>Medium SQL Queries</h3>
-                                <p>JOINs, GROUP BY, basic window operations, aggregations</p>
-                                <input 
-                                    type="number" 
-                                    id="medium_statements" 
-                                    name="medium_statements" 
-                                    min="0" 
-                                    value="0"
-                                    placeholder="0"
-                                >
-                                <div class="complexity-examples">
-                                    <strong>Examples:</strong>
-                                    <ul>
-                                        <li>Inner/Outer JOINs</li>
-                                        <li>GROUP BY with aggregations</li>
-                                        <li>TUMBLE/HOP windows</li>
-                                        <li>COUNT, SUM, AVG functions</li>
-                                    </ul>
-                                </div>
-                            </div>
-
-                            <div class="complexity-item">
-                                <h3>Complex SQL Queries</h3>
-                                <p>Advanced analytics, complex windows, nested queries, ML operations</p>
-                                <input 
-                                    type="number" 
-                                    id="complex_statements" 
-                                    name="complex_statements" 
-                                    min="0" 
-                                    value="0"
-                                    placeholder="0"
-                                >
-                                <div class="complexity-examples">
-                                    <strong>Examples:</strong>
-                                    <ul>
-                                        <li>Complex event pattern matching</li>
-                                        <li>Multi-level window operations</li>
-                                        <li>User-defined functions (UDFs)</li>
-                                        <li>Advanced analytical queries</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Navigation Buttons -->
-                        <div class="tab-navigation-buttons">
-                            <button type="button" class="btn-previous" onclick="switchToTab('network-hardware')">
-                                ← Previous: Network & Hardware
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-             
-
-                <!-- Form Actions -->
-                <div class="form-actions">
-                    <button type="submit" class="btn-primary">
-                        🧮 Calculate Resource Estimates
-                    </button>
-                    <button type="button" class="btn-secondary" onclick="saveEstimation()">
-                        💾 Save Configuration
-                    </button>
-                </div>
-                    </form>
-                    </main>
-
-                    <footer>
-                        <div class="footer-content">
-                            <p>💡 <strong>Tip:</strong> Start with conservative estimates and adjust based on your testing results.</p>
-                            <div class="footer-links">
-                                <a href="/docs" class="footer-link">📖 API Documentation</a>
-                                <a href="https://flink.apache.org" target="_blank" class="footer-link">🔗 Apache Flink</a>
-                            </div>
-                        </div>
-                    </footer>
-                </div>
+            <!-- Navigation Buttons -->
+            <div class="tab-navigation-buttons">
+                <button type="button" class="btn-previous"
+                    onclick="switchToTab('project-workload')">
+                    ← Previous: Project & Workload
+                </button>
+                <button type="button" class="btn-next"
+                    onclick="switchToTab('statement-complexity')">
+                    Next: SQL Queries Complexity →
+                </button>
             </div>
         </div>
     </div>
 
-    <!-- Sidebar Overlay for mobile -->
-    <div class="sidebar-overlay" onclick="closeSidebar()"></div>
+    <!-- Tab 3: SQL Queries Complexity -->
+    <div class="tab-content" id="statement-complexity">
+        <div class="form-section">
+            <h2>Flink SQL Queries Complexity</h2>
+            <p class="section-description">
+                Categorize your Flink SQL queries by complexity. This helps estimate processing
+                overhead.
+            </p>
 
-    <script>
-        // Sidebar toggle functionality for mobile
-        function toggleSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.toggle('active');
-            overlay.classList.toggle('active');
-        }
+            <div class="complexity-grid">
+                <div class="complexity-item">
+                    <h3>Simple SQL Queries</h3>
+                    <p>SELECT, basic WHERE clauses, simple projections</p>
+                    <input type="number" id="simple_statements" name="simple_statements" min="0"
+                        value="1" placeholder="0">
+                    <div class="complexity-examples">
+                        <strong>Examples:</strong>
+                        <ul>
+                            <li>SELECT id, name FROM users</li>
+                            <li>WHERE status = 'active'</li>
+                            <li>Basic field filtering</li>
+                        </ul>
+                    </div>
+                </div>
 
-        function closeSidebar() {
-            const sidebar = document.querySelector('.sidebar');
-            const overlay = document.querySelector('.sidebar-overlay');
-            
-            sidebar.classList.remove('active');
-            overlay.classList.remove('active');
-        }
+                <div class="complexity-item">
+                    <h3>Medium SQL Queries</h3>
+                    <p>JOINs, GROUP BY, basic window operations, aggregations</p>
+                    <input type="number" id="medium_statements" name="medium_statements" min="0"
+                        value="1" placeholder="0">
+                    <div class="complexity-examples">
+                        <strong>Examples:</strong>
+                        <ul>
+                            <li>Inner/Outer JOINs</li>
+                            <li>GROUP BY with aggregations</li>
+                            <li>TUMBLE/HOP windows</li>
+                            <li>COUNT, SUM, AVG functions</li>
+                        </ul>
+                    </div>
+                </div>
 
-        // Theme toggle functionality
-        function toggleTheme() {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('theme', newTheme);
-            
-            // Update button text and icon
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (newTheme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        }
+                <div class="complexity-item">
+                    <h3>Complex SQL Queries</h3>
+                    <p>Advanced analytics, complex windows, nested queries, ML operations</p>
+                    <input type="number" id="complex_statements" name="complex_statements"
+                        min="0" value="1" placeholder="0">
+                    <div class="complexity-examples">
+                        <strong>Examples:</strong>
+                        <ul>
+                            <li>Complex event pattern matching</li>
+                            <li>Multi-level window operations</li>
+                            <li>User-defined functions (UDFs)</li>
+                            <li>Advanced analytical queries</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
 
-        // Initialize theme on page load
-        function initializeTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-            const theme = savedTheme || (prefersDark ? 'dark' : 'light');
-            
-            document.documentElement.setAttribute('data-theme', theme);
-            
-            // Update button to match current theme
-            const themeIcon = document.querySelector('.theme-icon');
-            const themeText = document.querySelector('.theme-text');
-            
-            if (theme === 'dark') {
-                themeIcon.textContent = '☀️';
-                themeText.textContent = 'Light';
-            } else {
-                themeIcon.textContent = '🌙';
-                themeText.textContent = 'Dark';
-            }
-        }
+            <!-- Navigation Buttons -->
+            <div class="tab-navigation-buttons">
+                <button type="button" class="btn-previous"
+                    onclick="switchToTab('network-hardware')">
+                    ← Previous: Network & Hardware
+                </button>
+            </div>
+        </div>
+    </div>
 
-        // Existing JavaScript starts here
-    </script>
 
-    <script>
-        // Tab functionality
-        document.addEventListener('DOMContentLoaded', function() {
-            // Initialize theme
-            initializeTheme();
-            
-            const tabButtons = document.querySelectorAll('.tab-button');
-            const tabContents = document.querySelectorAll('.tab-content');
 
-            tabButtons.forEach(button => {
-                button.addEventListener('click', function() {
-                    const targetTab = this.getAttribute('data-tab');
+    <!-- Form Actions -->
+    <div class="form-actions">
+        <button type="submit" class="btn-primary">
+            🧮 Calculate Resource Estimates
+        </button>
+        <button type="button" class="btn-secondary" onclick="saveEstimation()">
+            💾 Save Configuration
+        </button>
+    </div>
+</form>
+{% endblock %}
 
-                    // Remove active class from all buttons and contents
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    tabContents.forEach(content => content.classList.remove('active'));
+{% block scripts %}
+<script>
+    // Tab functionality
+    document.addEventListener('DOMContentLoaded', function () {
+        const tabButtons = document.querySelectorAll('.tab-button');
+        const tabContents = document.querySelectorAll('.tab-content');
 
-                    // Add active class to clicked button and corresponding content
-                    this.classList.add('active');
-                    document.getElementById(targetTab).classList.add('active');
-                });
+        tabButtons.forEach(button => {
+            button.addEventListener('click', function () {
+                const targetTab = this.getAttribute('data-tab');
+
+                // Remove active class from all buttons and contents
+                tabButtons.forEach(btn => btn.classList.remove('active'));
+                tabContents.forEach(content => content.classList.remove('active'));
+
+                // Add active class to clicked button and corresponding content
+                this.classList.add('active');
+                document.getElementById(targetTab).classList.add('active');
             });
         });
+    });
 
-        // Function to switch to a specific tab
-        function switchToTab(tabId) {
-            const tabButtons = document.querySelectorAll('.tab-button');
-            const tabContents = document.querySelectorAll('.tab-content');
-            
-            // Remove active class from all buttons and contents
-            tabButtons.forEach(btn => btn.classList.remove('active'));
-            tabContents.forEach(content => content.classList.remove('active'));
-            
-            // Add active class to target tab button and content
-            const targetButton = document.querySelector(`[data-tab="${tabId}"]`);
-            const targetContent = document.getElementById(tabId);
-            
-            if (targetButton && targetContent) {
-                targetButton.classList.add('active');
-                targetContent.classList.add('active');
+    // Function to switch to a specific tab
+    function switchToTab(tabId) {
+        const tabButtons = document.querySelectorAll('.tab-button');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        // Remove active class from all buttons and contents
+        tabButtons.forEach(btn => btn.classList.remove('active'));
+        tabContents.forEach(content => content.classList.remove('active'));
+
+        // Add active class to target tab button and content
+        const targetButton = document.querySelector(`[data-tab="${tabId}"]`);
+        const targetContent = document.getElementById(tabId);
+
+        if (targetButton && targetContent) {
+            targetButton.classList.add('active');
+            targetContent.classList.add('active');
+        }
+    }
+
+    // Save estimation function
+    function saveEstimation() {
+        const form = document.querySelector('.estimation-form');
+        const formData = new FormData(form);
+
+        // Validate required fields
+        const requiredFields = ['project_name', 'messages_per_second', 'avg_record_size_bytes', 'num_distinct_keys', 'data_skew_risk', 'bandwidth_capacity_mbps'];
+        for (let field of requiredFields) {
+            if (!formData.get(field)) {
+                alert(`Please fill in the ${field.replace('_', ' ')} field.`);
+                return;
             }
         }
 
-        // Save estimation function
-        function saveEstimation() {
-            const form = document.querySelector('.estimation-form');
-            const formData = new FormData(form);
-            
-            // Validate required fields
-            const requiredFields = ['project_name', 'messages_per_second', 'avg_record_size_bytes', 'num_distinct_keys', 'data_skew_risk', 'bandwidth_capacity_mbps'];
-            for (let field of requiredFields) {
-                if (!formData.get(field)) {
-                    alert(`Please fill in the ${field.replace('_', ' ')} field.`);
-                    return;
-                }
-            }
-
-            // Submit to save endpoint
-            fetch('/save-estimation', {
-                method: 'POST',
-                body: formData
-            })
+        // Submit to save endpoint
+        fetch('/save-estimation', {
+            method: 'POST',
+            body: formData
+        })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
@@ -468,27 +291,42 @@
             .catch(error => {
                 alert('Error saving configuration: ' + error.message);
             });
-        }
+    }
 
-        // Form validation enhancement
-        document.querySelector('.estimation-form').addEventListener('submit', function(e) {
-            const requiredFields = document.querySelectorAll('input[required]');
-            let allValid = true;
+    // Form validation enhancement - switch to tab with invalid field
+    document.querySelector('.estimation-form').addEventListener('submit', function (e) {
+        const requiredFields = document.querySelectorAll('input[required], select[required]');
+        let firstInvalidField = null;
 
-            requiredFields.forEach(field => {
-                if (!field.value.trim()) {
-                    field.classList.add('error');
-                    allValid = false;
-                } else {
-                    field.classList.remove('error');
+        requiredFields.forEach(field => {
+            if (!field.value.trim()) {
+                field.classList.add('error');
+                if (!firstInvalidField) {
+                    firstInvalidField = field;
                 }
-            });
-
-            if (!allValid) {
-                e.preventDefault();
-                alert('Please fill in all required fields.');
+            } else {
+                field.classList.remove('error');
             }
         });
-    </script>
-</body>
-</html>
+
+        if (firstInvalidField) {
+            e.preventDefault();
+            
+            // Find which tab contains the invalid field
+            const tabContent = firstInvalidField.closest('.tab-content');
+            if (tabContent) {
+                const tabId = tabContent.id;
+                switchToTab(tabId);
+                
+                // Focus the field after tab switch
+                setTimeout(() => {
+                    firstInvalidField.focus();
+                    firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 100);
+            }
+            
+            alert('Please fill in all required fields.');
+        }
+    });
+</script>
+{% endblock %}

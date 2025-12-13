@@ -18,12 +18,12 @@
     --shadow-light: rgba(0, 0, 0, 0.05);
     --shadow-medium: rgba(0, 0, 0, 0.1);
     --sidebar-bg: #ffffff;
-    --header-bg: #000000;
+    --header-bg: #517df4;
     --card-bg: #ffffff;
     --input-bg: #ffffff;
     --input-border: #ddd;
-    --accent-primary: #667eea;
-    --accent-secondary: #764ba2;
+    --accent-primary: #517df4;
+    --accent-secondary: #1d4ed8;
     --success-color: #28a745;
     --warning-color: #ffc107;
     --danger-color: #dc3545;
@@ -46,8 +46,8 @@
     --card-bg: #2d3748;
     --input-bg: #4a5568;
     --input-border: #718096;
-    --accent-primary: #667eea;
-    --accent-secondary: #764ba2;
+    --accent-primary: #2563eb;
+    --accent-secondary: #1d4ed8;
     --success-color: #38a169;
     --warning-color: #d69e2e;
     --danger-color: #e53e3e;
@@ -138,7 +138,7 @@ body {
 }
 
 .nav-link.active {
-    background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+    background: #517df4;
     color: white;
     border-radius: 0;
 }
@@ -399,7 +399,7 @@ body {
 }
 
 .complexity-item:hover {
-    border-color: #667eea;
+    border-color: #2563eb;
 }
 
 .complexity-item h3 {
@@ -429,7 +429,7 @@ body {
 }
 
 .estimate-btn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #2563eb;
     color: white;
     padding: 15px 40px;
     border: none;
@@ -437,12 +437,14 @@ body {
     font-size: 1.1em;
     font-weight: 600;
     cursor: pointer;
-    transition: transform 0.2s ease;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .estimate-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+    background: #1d4ed8;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
 }
 
 .estimate-btn:disabled {
@@ -488,7 +490,7 @@ body {
     flex-direction: column;
     align-items: flex-start;
     box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
-    border-left: 4px solid #667eea;
+    border-left: 4px solid #2563eb;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -536,7 +538,7 @@ body {
 
 .resource-card {
     background: white;
-    padding: 25px;
+    padding: 20px;
     border-radius: 8px;
     text-align: center;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
@@ -554,9 +556,9 @@ body {
 }
 
 .resource-value {
-    font-size: 2em;
+    font-size: 1.5em;
     font-weight: 700;
-    color: #667eea;
+    color: #2563eb;
     margin-bottom: 5px;
 }
 
@@ -583,7 +585,7 @@ body {
     color: #333;
     margin-bottom: 15px;
     font-size: 1.2em;
-    border-bottom: 2px solid #667eea;
+    border-bottom: 2px solid #2563eb;
     padding-bottom: 5px;
 }
 
@@ -713,58 +715,62 @@ body {
     margin: 0;
 }
 
-.btn-primary {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-    color: white;
-    box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);
-}
-
-.btn-secondary {
-    background: linear-gradient(135deg, #64748b 0%, #475569 100%);
-    color: white;
-    box-shadow: 0 4px 16px rgba(100, 116, 139, 0.3);
-}
-
-.btn-success {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    color: white;
-    box-shadow: 0 4px 16px rgba(5, 150, 105, 0.3);
-}
-
-.btn-success:hover {
-    box-shadow: 0 8px 24px rgba(5, 150, 105, 0.4);
-    background: linear-gradient(135deg, #065f46 0%, #064e3b 100%);
-}
-
-.btn-danger {
-    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-    color: white;
-    box-shadow: 0 4px 16px rgba(220, 38, 38, 0.3);
-}
-
-.btn-danger:hover {
-    box-shadow: 0 8px 24px rgba(220, 38, 38, 0.4);
-    background: linear-gradient(135deg, #991b1b 0%, #7f1d1d 100%);
-}
-
+/* Active/Primary buttons - Blue */
+.btn-primary,
+.btn-success,
 .btn.saved {
-    background: linear-gradient(135deg, #059669 0%, #047857 100%);
-    box-shadow: 0 4px 16px rgba(5, 150, 105, 0.3);
+    background: #517df4;
+    color: white;
+    padding: 15px 40px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
-.btn:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+.btn-primary:hover,
+.btn-success:hover,
+.btn.saved:hover {
+    background: #1d4ed8;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
 }
 
-.btn-primary:hover {
-    box-shadow: 0 8px 24px rgba(79, 70, 229, 0.4);
-    background: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%);
+/* Secondary/Inactive buttons - Grey */
+.btn-secondary {
+    background: #6b7280;
+    color: white;
+    padding: 15px 40px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .btn-secondary:hover {
-    box-shadow: 0 8px 24px rgba(100, 116, 139, 0.4);
-    background: linear-gradient(135deg, #52525b 0%, #3f3f46 100%);
+    background: #4b5563;
+    box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
+}
+
+/* Danger button - keep distinct for destructive actions */
+.btn-danger {
+    background: #dc2626;
+    color: white;
+    box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+.btn-danger:hover {
+    background: #b91c1c;
+    box-shadow: 0 6px 16px rgba(220, 38, 38, 0.4);
+}
+
+.btn:hover {
+    transform: translateY(-2px);
 }
 
 .btn:active {
@@ -772,72 +778,46 @@ body {
     transition: all 0.1s ease;
 }
 
+/* Next button - Blue (active action) */
 .btn-next {
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    background: #2563eb;
     color: white;
     position: relative;
-    border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);
+    padding: 15px 40px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+    cursor: pointer;
     transition: all 0.3s ease;
-    overflow: hidden;
-    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.25);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(102, 126, 234, 0.2);
-    font-weight: 500;
-}
-
-.btn-next::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
-    transition: left 0.6s ease;
-}
-
-.btn-next:hover::before {
-    left: 100%;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .btn-next:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.35);
-    background: linear-gradient(135deg, #7289f0 0%, #8259b8 100%);
+    background: #1d4ed8;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
 }
 
+/* Previous button - Grey (secondary action) */
 .btn-previous {
-    background: linear-gradient(135deg, #6c757d 0%, #5a6169 100%);
+    background: #6b7280;
     color: white;
     position: relative;
-    overflow: hidden;
-    border-radius: 12px;
-    box-shadow: 0 2px 12px rgba(108, 117, 125, 0.25);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    border: 1px solid rgba(108, 117, 125, 0.2);
-    font-weight: 500;
-}
-
-.btn-previous::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
-    transition: left 0.6s ease;
-}
-
-.btn-previous:hover::before {
-    left: 100%;
+    padding: 15px 40px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
 }
 
 .btn-previous:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 20px rgba(108, 117, 125, 0.35);
-    background: linear-gradient(135deg, #78848e 0%, #626971 100%);
+    background: #4b5563;
+    box-shadow: 0 6px 16px rgba(107, 114, 128, 0.4);
 }
 
 .tab-navigation-buttons {
@@ -848,7 +828,7 @@ body {
     padding: 25px 0;
     border-top: 1px solid rgba(224, 230, 237, 0.6);
     gap: 20px;
-    background: linear-gradient(to right, rgba(102, 126, 234, 0.02), rgba(118, 75, 162, 0.02));
+    background: transparent;
     border-radius: 0 0 12px 12px;
 }
 
@@ -976,14 +956,14 @@ footer {
 }
 
 .tab-button:hover {
-    background: rgba(102, 126, 234, 0.1);
-    color: #667eea;
+    background: rgba(37, 99, 235, 0.1);
+    color: #2563eb;
 }
 
 .tab-button.active {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #2563eb;
     color: white;
-    box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
 }
 
 .tab-content {
@@ -1010,7 +990,7 @@ footer {
 }
 
 .complexity-examples strong {
-    color: #667eea;
+    color: #2563eb;
     display: block;
     margin-bottom: 8px;
 }
@@ -1027,7 +1007,7 @@ footer {
 
 /* Info box styles for hardware section */
 .info-box {
-    background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+    background: #e3f2fd;
     border: 1px solid #e1bee7;
     border-radius: 8px;
     padding: 20px;
@@ -1051,7 +1031,7 @@ footer {
 }
 
 .info-box strong {
-    color: #667eea;
+    color: #2563eb;
 }
 
 /* Form validation styles */
@@ -1087,14 +1067,14 @@ footer {
 }
 
 .footer-link {
-    color: #667eea;
+    color: #2563eb;
     text-decoration: none;
     font-weight: 500;
     transition: color 0.3s ease;
 }
 
 .footer-link:hover {
-    color: #764ba2;
+    color: #1d4ed8;
     text-decoration: underline;
 }
 
@@ -1142,7 +1122,7 @@ footer {
     padding: 20px;
     border-radius: 8px;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    border-left: 4px solid #667eea;
+    border-left: 4px solid #2563eb;
 }
 
 .consideration-section.warning {
@@ -1185,7 +1165,7 @@ footer {
 }
 
 .highlight {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #2563eb;
     color: white;
     padding: 12px;
     border-radius: 6px;
@@ -1337,23 +1317,23 @@ footer {
 
 .cta-button {
     display: inline-block;
-    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+    background: #2563eb;
     color: white;
     text-decoration: none;
     padding: 18px 44px;
-    border-radius: 12px;
+    border-radius: 10px;
     font-weight: 600;
     font-size: 1.1em;
     transition: all 0.3s ease;
-    box-shadow: 0 4px 16px rgba(79, 70, 229, 0.3);
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
     border: none;
     cursor: pointer;
 }
 
 .cta-button:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(79, 70, 229, 0.4);
-    background: linear-gradient(135deg, #4338ca 0%, #6d28d9 100%);
+    transform: translateY(-2px);
+    background: #1d4ed8;
+    box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
     color: white;
 }
 

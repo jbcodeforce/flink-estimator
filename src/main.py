@@ -54,25 +54,25 @@ templates = Jinja2Templates(directory=templates_dir)
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     """Serve the home page with navigation tiles."""
-    return templates.TemplateResponse("home.html", {"request": request})
+    return templates.TemplateResponse("home.html", {"request": request, "active_page": "home"})
 
 
 @app.get("/estimation-form", response_class=HTMLResponse)
 async def estimation_form(request: Request):
     """Serve the estimation form page."""
-    return templates.TemplateResponse("estimation.html", {"request": request})
+    return templates.TemplateResponse("estimation.html", {"request": request, "active_page": "estimation"})
 
 
 @app.get("/considerations", response_class=HTMLResponse)
 async def considerations_page(request: Request):
     """Serve the considerations/guide page."""
-    return templates.TemplateResponse("considerations.html", {"request": request})
+    return templates.TemplateResponse("considerations.html", {"request": request, "active_page": "considerations"})
 
 
 @app.get("/saved", response_class=HTMLResponse)
 async def saved_estimations_page(request: Request):
     """Serve the saved estimations page."""
-    return templates.TemplateResponse("saved.html", {"request": request})
+    return templates.TemplateResponse("saved.html", {"request": request, "active_page": "saved"})
 
 
 @app.post("/estimate", response_class=HTMLResponse)
@@ -81,6 +81,10 @@ async def estimate_resources(
     project_name: Annotated[str, Form()],
     messages_per_second: Annotated[int, Form()],
     avg_record_size_bytes: Annotated[int, Form()],
+    num_distinct_keys: Annotated[int, Form()] = 100_000,
+    data_skew_risk: Annotated[str, Form()] = "medium",
+    bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0
@@ -93,6 +97,10 @@ async def estimate_resources(
             project_name=project_name,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
+            num_distinct_keys=num_distinct_keys,
+            data_skew_risk=data_skew_risk,
+            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements
@@ -107,7 +115,8 @@ async def estimate_resources(
                 "request": request,
                 "project_name": project_name,
                 "estimation": estimation_result,
-                "success": True
+                "success": True,
+                "active_page": "results"
             }
         )
     except Exception as e:
@@ -117,7 +126,8 @@ async def estimate_resources(
                 "request": request,
                 "project_name": project_name if 'project_name' in locals() else "Unknown",
                 "error": str(e),
-                "success": False
+                "success": False,
+                "active_page": "results"
             }
         )
 
@@ -127,6 +137,10 @@ async def api_estimate(
     project_name: str,
     messages_per_second: int,
     avg_record_size_bytes: int,
+    num_distinct_keys: int = 100_000,
+    data_skew_risk: str = "medium",
+    bandwidth_capacity_mbps: int = 1000,
+    expected_latency_seconds: float = 1.0,
     simple_statements: int = 0,
     medium_statements: int = 0,
     complex_statements: int = 0
@@ -137,6 +151,10 @@ async def api_estimate(
             project_name=project_name,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
+            num_distinct_keys=num_distinct_keys,
+            data_skew_risk=data_skew_risk,
+            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements
@@ -166,6 +184,10 @@ async def save_estimation(
     project_name: Annotated[str, Form()],
     messages_per_second: Annotated[int, Form()],
     avg_record_size_bytes: Annotated[int, Form()],
+    num_distinct_keys: Annotated[int, Form()] = 100_000,
+    data_skew_risk: Annotated[str, Form()] = "medium",
+    bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0
@@ -177,6 +199,10 @@ async def save_estimation(
             project_name=project_name,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
+            num_distinct_keys=num_distinct_keys,
+            data_skew_risk=data_skew_risk,
+            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements
@@ -242,6 +268,38 @@ async def download_estimation(filename: str):
     )
 
 
+@app.delete("/delete-estimation/{filename}")
+async def delete_estimation(filename: str):
+    """Delete a saved estimation JSON file."""
+    saved_dir = get_saved_estimations_directory()
+    filepath = os.path.join(saved_dir, filename)
+    
+    # Security: ensure filename doesn't contain path traversal
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return JSONResponse({
+            "success": False,
+            "message": "Invalid filename"
+        }, status_code=400)
+    
+    if not os.path.exists(filepath):
+        return JSONResponse({
+            "success": False,
+            "message": "File not found"
+        }, status_code=404)
+    
+    try:
+        os.remove(filepath)
+        return JSONResponse({
+            "success": True,
+            "message": f"Estimation '{filename}' deleted successfully"
+        })
+    except Exception as e:
+        return JSONResponse({
+            "success": False,
+            "message": f"Error deleting file: {str(e)}"
+        }, status_code=500)
+
+
 @app.get("/reload/{filename}", response_class=HTMLResponse)
 async def reload_estimation(request: Request, filename: str):
     """Reload a saved estimation and display the results page."""
@@ -255,7 +313,8 @@ async def reload_estimation(request: Request, filename: str):
                 "request": request,
                 "project_name": "Unknown",
                 "error": f"Estimation file '{filename}' not found",
-                "success": False
+                "success": False,
+                "active_page": "results"
             }
         )
     
@@ -276,7 +335,8 @@ async def reload_estimation(request: Request, filename: str):
                 "success": True,
                 "is_reloaded": True,
                 "saved_filename": filename,
-                "saved_at": saved_estimation.metadata.saved_at
+                "saved_at": saved_estimation.metadata.saved_at,
+                "active_page": "results"
             }
         )
         
@@ -287,7 +347,8 @@ async def reload_estimation(request: Request, filename: str):
                 "request": request,
                 "project_name": "Unknown",
                 "error": f"Error loading estimation: {str(e)}",
-                "success": False
+                "success": False,
+                "active_page": "results"
             }
         )
 

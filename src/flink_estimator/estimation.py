@@ -157,6 +157,9 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     
     # Apply skew factor and latency factor to CPU
     total_cpu_cores = (base_cpu_cores + throughput_cpu_factor + complexity_cpu + bandwidth_cpu_penalty) * skew_factor * latency_factor
+    total_nodes = math.ceil(total_cpu_cores // 8)
+    if total_nodes < 3:
+        total_nodes = 3
     total_cpu_cores = math.ceil(total_cpu_cores)  # Round up to whole cores
     
     # TaskManager recommendations
@@ -188,6 +191,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     resource_estimates = ResourceEstimates(
         total_memory_mb=math.ceil(total_memory_mb),
         total_cpu_cores=total_cpu_cores,
+        total_nodes=total_nodes,
         processing_load_score=round(processing_load, 2)
     )
     

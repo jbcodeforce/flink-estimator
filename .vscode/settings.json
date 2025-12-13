@@ -9,5 +9,10 @@
     "files.exclude": {
         "**/__pycache__": true,
         "**/.pytest_cache": true
-    }
+    },
+    "cursorpyright.analysis.autoImportCompletions": true,
+    "cursorpyright.analysis.autoSearchPaths": true,
+    "cursorpyright.analysis.extraPaths": [
+        "./src"
+    ]
 }
