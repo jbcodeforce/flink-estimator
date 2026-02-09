@@ -12,6 +12,8 @@ A web-based tool to estimate Apache Flink cluster resource requirements based on
 - **Save & Manage Estimations**: Save estimations as JSON files with metadata
 - **Download & Preview**: View saved estimations and download them for record keeping
 
+![](./docs/images/home_page.png)
+
 ## Quick Start
 
 ### Prerequisites
@@ -19,7 +21,7 @@ A web-based tool to estimate Apache Flink cluster resource requirements based on
 - Python 3.11 or higher
 - uv (Python package manager)
 
-### Installation
+### Installation running with Python
 
 1. **Navigate to the project directory:**
    ```bash
@@ -37,7 +39,7 @@ A web-based tool to estimate Apache Flink cluster resource requirements based on
    ```
 
 4. **Access the web interface:**
-   Open your browser and go to: http://localhost:8000
+   Open your browser and go to: [http://localhost:8000](http://localhost:8000)
 
 ## Docker Deployment
 
@@ -62,15 +64,14 @@ docker-compose logs -f
 Under src 
 
 ```bash
-# Build the image
-docker build -t flink-estimator .
+# Build the im
 
 # Run the container
 docker run -d \
   --name flink-estimator \
   -p 8000:8000 \
   -v flink_estimations:/app/saved_estimations \
-  flink-estimator
+  jbcodeforce/flink-estimator:latest
 
 # View logs
 docker logs -f flink-estimator
@@ -359,8 +360,8 @@ The application is structured to easily add new estimation models:
 3. **Add styling** in `static/style.css`
 
 ## Important Notes
-
-⚠️ **Disclaimer**: This tool provides estimated values based on simplified models. Actual resource requirements may vary significantly based on:
+ 
+**Disclaimer**: This tool provides estimated values based on simplified models. Actual resource requirements may vary significantly based on:
 
 - Specific use case patterns
 - Data distribution and skew
@@ -391,4 +392,4 @@ For issues or questions:
 
 ---
 
-**Happy Flink Streaming! 🌊** 
+**Happy Flink Streaming!** 
