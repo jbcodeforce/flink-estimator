@@ -6,7 +6,7 @@ estimation results, and file persistence.
 """
 
 from pydantic import BaseModel, Field, field_validator, model_validator
-from typing import Literal
+from typing import Literal, Optional
 
 
 class EstimationInput(BaseModel):
@@ -106,7 +106,7 @@ class EstimationResult(BaseModel):
     input_summary: InputSummary
     resource_estimates: ResourceEstimates
     cluster_recommendations: ClusterRecommendations
-    #scaling_recommendations: ScalingRecommendations
+    scaling_recommendations: Optional[ScalingRecommendations] = None
 
 
 class EstimationMetadata(BaseModel):

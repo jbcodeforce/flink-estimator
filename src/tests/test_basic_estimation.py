@@ -121,6 +121,8 @@ class TestBasicEstimation:
             messages_per_second=50000,
             avg_record_size_bytes=2048,
             taskmanager_memory_gb=32.0,
+            num_distinct_keys=10000000,
+            data_skew_risk="low",
             taskmanager_cpu_max=8,
             simple_statements=50,
             medium_statements=30,

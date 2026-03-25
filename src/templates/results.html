@@ -56,6 +56,9 @@
             </div>
         </div>
 
+        {% set tm = estimation.cluster_recommendations.taskmanagers %}
+        {% set tm_memory_mb = tm.memory_gb_each * 1024 %}
+        {% set tm_cpu_each = (tm.total_cpus + tm.count - 1) // tm.count if tm.count else 0 %}
         <!-- Resource Estimates -->
         <div class="result-section">
             <h2>Resource Estimates</h2>
@@ -67,12 +70,12 @@
                 </div>
                 <div class="resource-card">
                     <h3>Total CPU Cores</h3>
-                    <div class="resource-value">{{ estimation.resource_estimates.total_cpu_cores }}</div>
+                    <div class="resource-value">{{ estimation.resource_estimates.total_cpus }}</div>
                     <div class="resource-subtext">Recommended cores</div>
                 </div>
                 <div class="resource-card">
                     <h3>Total Nodes</h3>
-                    <div class="resource-value">{{ estimation.resource_estimates.total_nodes}}</div>
+                    <div class="resource-value">{{ estimation.resource_estimates.total_nodes }}</div>
                     <div class="resource-subtext">Recommended cores</div>
                 </div>
                 <div class="resource-card">
@@ -111,11 +114,11 @@
                         </div>
                         <div class="config-item">
                             <span class="config-label">Memory per TM:</span>
-                            <span class="config-value">{{ "{:,}".format(estimation.cluster_recommendations.taskmanagers.memory_mb_each) }} MB</span>
+                            <span class="config-value">{{ "{:,}".format(tm_memory_mb) }} MB ({{ tm.memory_gb_each }} GB)</span>
                         </div>
                         <div class="config-item">
                             <span class="config-label">CPU per TM:</span>
-                            <span class="config-value">{{ estimation.cluster_recommendations.taskmanagers.cpu_cores_each }}</span>
+                            <span class="config-value">{{ tm_cpu_each }}</span>
                         </div>
                         <div class="config-item">
                             <span class="config-label">Total Memory:</span>
@@ -130,6 +133,7 @@
             </div>
         </div>
 
+        {% if estimation.scaling_recommendations %}
         <!-- Scaling Recommendations -->
         <div class="result-section">
             <h2>Scaling Recommendations</h2>
@@ -152,6 +156,7 @@
                 </div>
             </div>
         </div>
+        {% endif %}
 
         <!-- Sample Configuration -->
         <div class="result-section">
@@ -162,15 +167,17 @@
 jobmanager.memory.process.size: {{ estimation.cluster_recommendations.jobmanager.memory_mb }}m
 
 # TaskManager
-taskmanager.memory.process.size: {{ estimation.cluster_recommendations.taskmanagers.memory_mb_each }}m
-taskmanager.numberOfTaskSlots: {{ estimation.cluster_recommendations.taskmanagers.cpu_cores_each }}
+taskmanager.memory.process.size: {{ tm_memory_mb }}m
+taskmanager.numberOfTaskSlots: {{ tm_cpu_each }}
 
 # Checkpointing
+{% if estimation.scaling_recommendations %}
 execution.checkpointing.interval: {{ estimation.scaling_recommendations.checkpointing_interval_ms }}ms
 execution.checkpointing.mode: EXACTLY_ONCE
 
 # Parallelism
-parallelism.default: {{ estimation.scaling_recommendations.recommended_parallelism }}</code></pre>
+parallelism.default: {{ estimation.scaling_recommendations.recommended_parallelism }}
+{% endif %}</code></pre>
             </div>
         </div>
     </div>

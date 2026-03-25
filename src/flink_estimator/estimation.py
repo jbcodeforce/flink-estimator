@@ -278,11 +278,17 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         taskmanagers=taskmanager_config,
     )
 
+    scaling_recommendations = _compute_scaling_recommendations(
+        input_params,
+        math.ceil(total_cpu_needs),
+        processing_load,
+    )
 
     result = EstimationResult(
         input_summary=input_summary,
         resource_estimates=resource_estimates,
-        cluster_recommendations=cluster_recommendations
+        cluster_recommendations=cluster_recommendations,
+        scaling_recommendations=scaling_recommendations,
     )
 
     if os.environ.get("FLINK_ESTIMATOR_DEBUG", "").strip().lower() in ("1", "true", "yes"):
