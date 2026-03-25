@@ -31,7 +31,7 @@
                 </div>
                 <div class="summary-item">
                     <span class="label">Total Throughput:</span>
-                    <span class="value highlight">{{ estimation.input_summary.total_throughput_mb_per_sec }} MB/sec</span>
+                    <span class="value highlight">{{ "{:,.2f}".format(estimation.input_summary.total_throughput_mb_per_sec) }} MB/sec</span>
                 </div>
                 <div class="summary-item">
                     <span class="label">Expected Latency:</span>
@@ -186,6 +186,14 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
 
 <div class="actions">
     <a href="/" class="btn btn-secondary">← New Estimation</a>
+    {% if success and prefill %}
+    <form action="/estimation-form" method="get" id="editParamsForm" class="inline-form-edit">
+        {% for key, val in prefill.items() %}
+        <input type="hidden" name="{{ key }}" value="{{ val }}">
+        {% endfor %}
+        <button type="submit" class="btn btn-primary">Edit parameters and re-estimate</button>
+    </form>
+    {% endif %}
     {% if success %}
     <button onclick="saveEstimation()" class="btn btn-success" id="saveBtn">💾 Save to JSON</button>
     {% endif %}
@@ -204,6 +212,15 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
     <input type="hidden" name="simple_statements" value="{{ estimation.input_summary.simple_statements }}">
     <input type="hidden" name="medium_statements" value="{{ estimation.input_summary.medium_statements }}">
     <input type="hidden" name="complex_statements" value="{{ estimation.input_summary.complex_statements }}">
+    {% if prefill is not none %}
+    <input type="hidden" name="taskmanager_memory_min_gb" value="{{ prefill.taskmanager_memory_min_gb }}">
+    <input type="hidden" name="taskmanager_memory_max_gb" value="{{ prefill.taskmanager_memory_max_gb }}">
+    <input type="hidden" name="taskmanager_cpu_max" value="{{ prefill.taskmanager_cpu_max }}">
+    {% else %}
+    <input type="hidden" name="taskmanager_memory_min_gb" value="2.0">
+    <input type="hidden" name="taskmanager_memory_max_gb" value="8.0">
+    <input type="hidden" name="taskmanager_cpu_max" value="8">
+    {% endif %}
 </form>
 {% endif %}
 {% endblock %}

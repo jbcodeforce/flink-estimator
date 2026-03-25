@@ -18,7 +18,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from typing import Annotated
+from typing import Annotated, Any
 import json
 import os
 from datetime import datetime
@@ -50,6 +50,48 @@ print(f"Templates directory exists: {os.path.exists(templates_dir)}")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
+_PREFILL_INT_KEYS = frozenset(
+    {
+        "messages_per_second",
+        "avg_record_size_bytes",
+        "num_distinct_keys",
+        "bandwidth_capacity_mbps",
+        "simple_statements",
+        "medium_statements",
+        "complex_statements",
+        "taskmanager_cpu_max",
+    }
+)
+_PREFILL_FLOAT_KEYS = frozenset(
+    {
+        "expected_latency_seconds",
+        "taskmanager_memory_min_gb",
+        "taskmanager_memory_max_gb",
+    }
+)
+_PREFILL_STR_KEYS = frozenset({"project_name", "data_skew_risk"})
+
+
+def prefill_from_query_params(query_params) -> dict[str, Any]:
+    """Build prefill dict for estimation form from GET query (e.g. edit from results page)."""
+    out: dict[str, Any] = {}
+    for key in _PREFILL_STR_KEYS:
+        if key in query_params and query_params[key].strip():
+            out[key] = query_params[key].strip()
+    for key in _PREFILL_INT_KEYS:
+        if key in query_params and query_params[key].strip():
+            try:
+                out[key] = int(query_params[key])
+            except ValueError:
+                pass
+    for key in _PREFILL_FLOAT_KEYS:
+        if key in query_params and query_params[key].strip():
+            try:
+                out[key] = float(query_params[key])
+            except ValueError:
+                pass
+    return out
+
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -59,8 +101,12 @@ async def home(request: Request):
 
 @app.get("/estimation-form", response_class=HTMLResponse)
 async def estimation_form(request: Request):
-    """Serve the estimation form page."""
-    return templates.TemplateResponse("estimation.html", {"request": request, "active_page": "estimation"})
+    """Serve the estimation form page. Query string pre-fills fields (used when editing from results)."""
+    prefill = prefill_from_query_params(request.query_params)
+    return templates.TemplateResponse(
+        "estimation.html",
+        {"request": request, "active_page": "estimation", "prefill": prefill},
+    )
 
 
 @app.get("/considerations", response_class=HTMLResponse)
@@ -87,7 +133,10 @@ async def estimate_resources(
     expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
-    complex_statements: Annotated[int, Form()] = 0
+    complex_statements: Annotated[int, Form()] = 0,
+    taskmanager_memory_min_gb: Annotated[float, Form()] = 2.0,
+    taskmanager_memory_max_gb: Annotated[float, Form()] = 8.0,
+    taskmanager_cpu_max: Annotated[int, Form()] = 8,
 ):
     """Process the estimation request and return results."""
     
@@ -103,32 +152,37 @@ async def estimate_resources(
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
-            complex_statements=complex_statements
+            complex_statements=complex_statements,
+            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
+            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
+            taskmanager_cpu_max=taskmanager_cpu_max,
         )
         
         # Calculate estimation using Pydantic models
         estimation_result = calculate_flink_estimation(input_params)
         
         return templates.TemplateResponse(
-            "results.html", 
+            "results.html",
             {
                 "request": request,
                 "project_name": project_name,
                 "estimation": estimation_result,
                 "success": True,
-                "active_page": "results"
-            }
+                "active_page": "results",
+                "prefill": input_params.model_dump(),
+            },
         )
     except Exception as e:
         return templates.TemplateResponse(
             "results.html",
             {
                 "request": request,
-                "project_name": project_name if 'project_name' in locals() else "Unknown",
+                "project_name": project_name if "project_name" in locals() else "Unknown",
                 "error": str(e),
                 "success": False,
-                "active_page": "results"
-            }
+                "active_page": "results",
+                "prefill": None,
+            },
         )
 
 
@@ -143,7 +197,10 @@ async def api_estimate(
     expected_latency_seconds: float = 1.0,
     simple_statements: int = 0,
     medium_statements: int = 0,
-    complex_statements: int = 0
+    complex_statements: int = 0,
+    taskmanager_memory_min_gb: float = 2.0,
+    taskmanager_memory_max_gb: float = 8.0,
+    taskmanager_cpu_max: int = 8,
 ):
     """API endpoint for programmatic access to estimation via query parameters."""
     try:
@@ -157,7 +214,10 @@ async def api_estimate(
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
-            complex_statements=complex_statements
+            complex_statements=complex_statements,
+            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
+            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
+            taskmanager_cpu_max=taskmanager_cpu_max,
         )
         return calculate_flink_estimation(input_params)
     except Exception as e:
@@ -190,7 +250,10 @@ async def save_estimation(
     expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
-    complex_statements: Annotated[int, Form()] = 0
+    complex_statements: Annotated[int, Form()] = 0,
+    taskmanager_memory_min_gb: Annotated[float, Form()] = 2.0,
+    taskmanager_memory_max_gb: Annotated[float, Form()] = 8.0,
+    taskmanager_cpu_max: Annotated[int, Form()] = 8,
 ):
     """Save estimation results to JSON file."""
     try:
@@ -205,7 +268,10 @@ async def save_estimation(
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
-            complex_statements=complex_statements
+            complex_statements=complex_statements,
+            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
+            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
+            taskmanager_cpu_max=taskmanager_cpu_max,
         )
         
         # Calculate estimation using Pydantic models
@@ -314,8 +380,9 @@ async def reload_estimation(request: Request, filename: str):
                 "project_name": "Unknown",
                 "error": f"Estimation file '{filename}' not found",
                 "success": False,
-                "active_page": "results"
-            }
+                "active_page": "results",
+                "prefill": None,
+            },
         )
     
     try:
@@ -336,8 +403,9 @@ async def reload_estimation(request: Request, filename: str):
                 "is_reloaded": True,
                 "saved_filename": filename,
                 "saved_at": saved_estimation.metadata.saved_at,
-                "active_page": "results"
-            }
+                "active_page": "results",
+                "prefill": saved_estimation.input_parameters.model_dump(),
+            },
         )
         
     except Exception as e:
@@ -348,8 +416,9 @@ async def reload_estimation(request: Request, filename: str):
                 "project_name": "Unknown",
                 "error": f"Error loading estimation: {str(e)}",
                 "success": False,
-                "active_page": "results"
-            }
+                "active_page": "results",
+                "prefill": None,
+            },
         )
 
 

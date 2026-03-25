@@ -715,6 +715,11 @@ body {
     margin: 0;
 }
 
+.actions form.inline-form-edit {
+    display: inline-flex;
+    margin: 0;
+}
+
 /* Active/Primary buttons - Blue */
 .btn-primary,
 .btn-success,

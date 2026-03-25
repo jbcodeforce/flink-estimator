@@ -9,7 +9,8 @@
 {% endblock %}
 
 {% block content %}
-<form action="/estimate" method="post" class="estimation-form">
+{% set p = prefill if prefill is defined else {} %}
+<form action="/estimate" method="post" class="estimation-form" novalidate>
     <!-- Tab Navigation -->
     <div class="tab-navigation">
         <button type="button" class="tab-button active" data-tab="project-workload">
@@ -30,7 +31,8 @@
             <div class="form-group">
                 <label for="project_name">Project Name:</label>
                 <input type="text" id="project_name" name="project_name" required
-                    placeholder="Enter your project name">
+                    placeholder="Enter your project name"
+                    value="{{ p.get('project_name', '') }}">
             </div>
         </div>
 
@@ -40,7 +42,7 @@
             <div class="form-group">
                 <label for="messages_per_second">Expected Messages per Second:</label>
                 <input type="number" id="messages_per_second" name="messages_per_second"
-                    required min="1" placeholder="10000" value="10000">
+                    required min="1" placeholder="10000" value="{{ p.get('messages_per_second', 10000) }}">
                 <div class="help-text">The expected throughput of messages your Flink job will
                     process</div>
             </div>
@@ -48,14 +50,15 @@
             <div class="form-group">
                 <label for="avg_record_size_bytes">Average Record Size (bytes):</label>
                 <input type="number" id="avg_record_size_bytes" name="avg_record_size_bytes"
-                    required min="1" placeholder="1024" value="1024">
+                    required min="1" placeholder="1024" value="{{ p.get('avg_record_size_bytes', 1024) }}">
                 <div class="help-text">Average size of each message/record in bytes</div>
             </div>
 
             <div class="form-group">
                 <label for="expected_latency_seconds">Expected Latency (seconds):</label>
                 <input type="number" id="expected_latency_seconds"
-                    name="expected_latency_seconds" step="0.1" min="0.1" value="1.0"
+                    name="expected_latency_seconds" step="0.1" min="0.1"
+                    value="{{ p.get('expected_latency_seconds', 1.0) }}"
                     placeholder="e.g., 1.0">
                 <div class="help-text">Expected end-to-end processing latency in seconds</div>
             </div>
@@ -63,7 +66,7 @@
             <div class="form-group">
                 <label for="num_distinct_keys">Number of Distinct Keys:</label>
                 <input type="number" id="num_distinct_keys" name="num_distinct_keys" required
-                    min="1" value="100000" placeholder="e.g., 1000000" value="100000">
+                    min="1" placeholder="e.g., 1000000" value="{{ p.get('num_distinct_keys', 100000) }}">
                 <div class="help-text">Number of distinct partition keys (affects parallelism
                     and state distribution)</div>
             </div>
@@ -71,10 +74,11 @@
             <div class="form-group">
                 <label for="data_skew_risk">Data Skew Risk:</label>
                 <select id="data_skew_risk" name="data_skew_risk" required>
-                    <option value="low" selected>Low - Data is evenly distributed across keys</option>
-                    <option value="medium">Medium - Some keys have more data than
+                    {% set skew = p.get('data_skew_risk', 'low') %}
+                    <option value="low" {% if skew == 'low' %}selected{% endif %}>Low - Data is evenly distributed across keys</option>
+                    <option value="medium" {% if skew == 'medium' %}selected{% endif %}>Medium - Some keys have more data than
                         others</option>
-                    <option value="high">High - Significant data concentration on few keys
+                    <option value="high" {% if skew == 'high' %}selected{% endif %}>High - Significant data concentration on few keys
                     </option>
                 </select>
                 <div class="help-text">Risk of uneven data distribution which can cause hotspots
@@ -100,13 +104,35 @@
             <div class="form-group">
                 <label for="bandwidth_capacity_mbps">Network Bandwidth Capacity (Mbps):</label>
                 <input type="number" id="bandwidth_capacity_mbps" name="bandwidth_capacity_mbps"
-                    required min="1" value="1000" placeholder="e.g., 1000" value="1000">
+                    required min="1" value="{{ p.get('bandwidth_capacity_mbps', 10000) }}" placeholder="e.g., 10000">
                 <div class="help-text">Available network bandwidth for data transfer (affects
                     throughput limits)</div>
             </div>
         </div>
 
-
+        <div class="form-section">
+            <h2>TaskManager memory (per instance)</h2>
+            <div class="form-group">
+                <label for="taskmanager_memory_min_gb">Minimum memory (GB):</label>
+                <input type="number" id="taskmanager_memory_min_gb" name="taskmanager_memory_min_gb"
+                     min=".5" value="{{ p.get('taskmanager_memory_min_gb', 2.0) }}" placeholder="2.0">
+                <div class="help-text">Lower bound for recommended TaskManager heap or container memory</div>
+            </div>
+            <div class="form-group">
+                <label for="taskmanager_memory_max_gb">Maximum memory (GB):</label>
+                <input type="number" id="taskmanager_memory_max_gb" name="taskmanager_memory_max_gb"
+                     min="1" value="{{ p.get('taskmanager_memory_max_gb', 8.0) }}" placeholder="8.0">
+                <div class="help-text">Upper bound for recommended TaskManager memory (instance shape limit)</div>
+            </div>
+            <div class="form-group">
+                <label for="taskmanager_cpu_max">Maximum CPU per TaskManager (cores):</label>
+                <input type="number" id="taskmanager_cpu_max" name="taskmanager_cpu_max"
+                    required min="2" max="256" step="1"
+                    value="{{ p.get('taskmanager_cpu_max', 8) }}" placeholder="8">
+                <!-- Minimum is 2 CPUs (Flink TaskManagers need enough slots for typical operator chains). -->
+                <div class="help-text">Upper bound for CPU cores per TaskManager pod or host. Minimum is 2 CPUs.</div>
+            </div>
+        </div>
 
         <div class="form-section">
             <h2>Hardware Considerations</h2>
@@ -152,7 +178,7 @@
                     <h3>Simple SQL Queries</h3>
                     <p>SELECT, basic WHERE clauses, simple projections</p>
                     <input type="number" id="simple_statements" name="simple_statements" min="0"
-                        value="1" placeholder="0">
+                        value="{{ p.get('simple_statements', 1) }}" placeholder="0">
                     <div class="complexity-examples">
                         <strong>Examples:</strong>
                         <ul>
@@ -167,7 +193,7 @@
                     <h3>Medium SQL Queries</h3>
                     <p>JOINs, GROUP BY, basic window operations, aggregations</p>
                     <input type="number" id="medium_statements" name="medium_statements" min="0"
-                        value="1" placeholder="0">
+                        value="{{ p.get('medium_statements', 1) }}" placeholder="0">
                     <div class="complexity-examples">
                         <strong>Examples:</strong>
                         <ul>
@@ -183,7 +209,7 @@
                     <h3>Complex SQL Queries</h3>
                     <p>Advanced analytics, complex windows, nested queries, ML operations</p>
                     <input type="number" id="complex_statements" name="complex_statements"
-                        min="0" value="1" placeholder="0">
+                        min="0" value="{{ p.get('complex_statements', 1) }}" placeholder="0">
                     <div class="complexity-examples">
                         <strong>Examples:</strong>
                         <ul>
@@ -293,39 +319,36 @@
             });
     }
 
-    // Form validation enhancement - switch to tab with invalid field
+    // Validation for tabbed form: inactive tabs use display:none, so native HTML5
+    // required/constraints often block submit without a visible message. novalidate
+    // on the form defers to this handler, which switches to the tab then reports issues.
     document.querySelector('.estimation-form').addEventListener('submit', function (e) {
         const requiredFields = document.querySelectorAll('input[required], select[required]');
         let firstInvalidField = null;
 
         requiredFields.forEach(field => {
-            if (!field.value.trim()) {
+            field.classList.remove('error');
+            if (!field.checkValidity()) {
                 field.classList.add('error');
                 if (!firstInvalidField) {
                     firstInvalidField = field;
                 }
-            } else {
-                field.classList.remove('error');
             }
         });
 
         if (firstInvalidField) {
             e.preventDefault();
-            
-            // Find which tab contains the invalid field
+
             const tabContent = firstInvalidField.closest('.tab-content');
             if (tabContent) {
-                const tabId = tabContent.id;
-                switchToTab(tabId);
-                
-                // Focus the field after tab switch
-                setTimeout(() => {
-                    firstInvalidField.focus();
-                    firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }, 100);
+                switchToTab(tabContent.id);
             }
-            
-            alert('Please fill in all required fields.');
+
+            setTimeout(() => {
+                firstInvalidField.focus();
+                firstInvalidField.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                firstInvalidField.reportValidity();
+            }, 100);
         }
     });
 </script>

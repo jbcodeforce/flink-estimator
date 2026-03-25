@@ -5,8 +5,8 @@ This module contains all data models used for input validation,
 estimation results, and file persistence.
 """
 
-from pydantic import BaseModel, Field, field_validator
-from typing import Optional, Literal
+from pydantic import BaseModel, Field, field_validator, model_validator
+from typing import Literal
 
 
 class EstimationInput(BaseModel):
@@ -21,12 +21,39 @@ class EstimationInput(BaseModel):
     simple_statements: int = Field(default=0, ge=0, description="Number of simple statements")
     medium_statements: int = Field(default=0, ge=0, description="Number of medium complexity statements")
     complex_statements: int = Field(default=0, ge=0, description="Number of complex statements")
-    
+    taskmanager_memory_min_gb: float = Field(
+        default=2.0,
+        gt=0,
+        le=512,
+        description="Minimum memory per TaskManager (gigabytes)",
+    )
+    taskmanager_memory_max_gb: float = Field(
+        default=8.0,
+        gt=0,
+        le=512,
+        description="Maximum memory per TaskManager (gigabytes)",
+    )
+    taskmanager_cpu_max: int = Field(
+        default=8,
+        ge=2,
+        le=256,
+        description="Maximum CPU cores per TaskManager (instance shape limit)",
+    )
+
     @field_validator('project_name')
     def validate_project_name(cls, v):
         if not v or v.isspace():
             raise ValueError('Project name cannot be empty or just whitespace')
         return v.strip()
+
+    @model_validator(mode='after')
+    def taskmanager_memory_bounds(self):
+        if self.taskmanager_memory_max_gb < self.taskmanager_memory_min_gb:
+            raise ValueError(
+                'taskmanager_memory_max_gb must be greater than or equal to '
+                'taskmanager_memory_min_gb'
+            )
+        return self
     
     @property
     def total_statements(self) -> int:
@@ -50,12 +77,13 @@ class InputSummary(BaseModel):
     medium_statements: int
     complex_statements: int
     total_statements: int
+    tm_memory_capacity_gb: float
 
 
 class ResourceEstimates(BaseModel):
     """Estimated resource requirements"""
     total_memory_mb: int
-    total_cpu_cores: int
+    total_cpus: int
     total_nodes: int
     processing_load_score: float
 
@@ -63,16 +91,15 @@ class ResourceEstimates(BaseModel):
 class JobManagerConfig(BaseModel):
     """JobManager configuration specifications"""
     memory_mb: int
-    cpu_cores: int
+    cpu_cores: float = Field(..., ge=0.5, description="CPU cores (Kubernetes cpu units; fractional allowed)")
 
 
 class TaskManagerConfig(BaseModel):
     """TaskManager configuration specifications"""
     count: int
     memory_mb_each: int
-    cpu_cores_each: int
     total_memory_mb: int
-    total_cpu_cores: int
+    total_cpus: int
 
 
 class ClusterRecommendations(BaseModel):
@@ -94,7 +121,7 @@ class EstimationResult(BaseModel):
     input_summary: InputSummary
     resource_estimates: ResourceEstimates
     cluster_recommendations: ClusterRecommendations
-    scaling_recommendations: ScalingRecommendations
+    #scaling_recommendations: ScalingRecommendations
 
 
 class EstimationMetadata(BaseModel):
