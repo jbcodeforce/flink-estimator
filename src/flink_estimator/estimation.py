@@ -102,11 +102,11 @@ def _compute_taskmanager_layout(
     """
     Size TaskManagers so total memory and CPU fit.
 
-    Memory-bound: use as few TMs as possible by filling each up to taskmanager_memory_max_gb
+    Memory-bound: use as few TMs as possible by filling each up to taskmanager_memory_gb
     (a larger TM can run more chained operators / statements). CPU-bound floor still applies.
     """
     min_tm_mb = max(1, int(round(input_params.taskmanager_memory_min_gb * 1024)))
-    max_tm_mb = max(min_tm_mb, int(round(input_params.taskmanager_memory_max_gb * 1024)))
+    max_tm_mb = max(min_tm_mb, int(round(input_params.taskmanager_memory_gb * 1024)))
     tm_cpu_cap = input_params.taskmanager_cpu_max
     taskmanager_cpu_cores = min(
         tm_cpu_cap,
@@ -197,7 +197,7 @@ def _assess_cpu_need_for_throughput(total_throughput_mb_per_sec, input_params: E
 def _assess_cpu_need_due_to_memory(input_params: EstimationInput):
     state_size_GB = input_params.num_distinct_keys * input_params.avg_record_size_bytes / (1024 * 1024 * 1024)
     mem_need= state_size_GB * (input_params.medium_statements + input_params.complex_statements)
-    return mem_need/(input_params.taskmanager_memory_max_gb), math.ceil(mem_need)
+    return mem_need/(input_params.taskmanager_memory_gb), math.ceil(mem_need)
 
 
 def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResult:
@@ -212,20 +212,20 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     """
 
    
-    processing_load = 1
+    processing_load = 1 # not used yet 
     
     
 
     total_throughput_mb_per_sec = input_params.total_throughput_mb_per_sec
     
 
-    total_cpu_needs = _assess_cpu_need_for_throughput(total_throughput_mb_per_sec, input_params)
+    total_cpu_need_for_throuput = _assess_cpu_need_for_throughput(total_throughput_mb_per_sec, input_params)
 
-    cpu_need_due_to_memory, mem_need_for_state = _assess_cpu_need_due_to_memory(input_params)
-    total_cpu_needs= max(total_cpu_needs, cpu_need_due_to_memory)
-    num_taskmanagers = max(1, _compute_total_nodes(total_cpu_needs))
+    cpu_need_due_to_memory, mem_need_for_state_GB = _assess_cpu_need_due_to_memory(input_params)
+    total_cpu_needs= max(total_cpu_need_for_throuput, cpu_need_due_to_memory)
+    num_taskmanagers = math.ceil(total_cpu_needs)
     jobmanager_cpus = max(JOBMANAGER_CPU_CORES, math.ceil(num_taskmanagers / NB_TM_PER_JM))
-    taskmanager_memory_mb = input_params.taskmanager_memory_max_gb * 1024 * math.ceil(num_taskmanagers)
+    taskmanager_memory_mb = input_params.taskmanager_memory_gb * 1024 * math.ceil(num_taskmanagers)
     jobmanager_memory_mb = 1024 * math.ceil(jobmanager_cpus)
     total_memory_mb = taskmanager_memory_mb + jobmanager_memory_mb
 
@@ -234,7 +234,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
     taskmanager_config = TaskManagerConfig(
         count=num_taskmanagers,
-        memory_mb_each=math.ceil(taskmanager_memory_mb),
+        memory_gb_each=math.ceil(taskmanager_memory_mb),
         total_memory_mb=num_taskmanagers * math.ceil(taskmanager_memory_mb),
         total_cpus=math.ceil(total_cpu_needs),
     )
@@ -250,7 +250,8 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         medium_statements=input_params.medium_statements,
         complex_statements=input_params.complex_statements,
         total_statements=input_params.total_statements,
-        tm_memory_capacity_gb=input_params.taskmanager_memory_max_gb
+        tm_memory_capacity_gb=input_params.taskmanager_memory_gb
+
     )
 
     resource_estimates = ResourceEstimates(
@@ -267,8 +268,8 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
     taskmanager_config = TaskManagerConfig(
         count=num_taskmanagers,
-        memory_mb_each=math.ceil(taskmanager_memory_mb),
-        total_memory_mb=num_taskmanagers * math.ceil(taskmanager_memory_mb),
+        memory_gb_each=math.ceil(input_params.taskmanager_memory_gb),
+        total_memory_mb= math.ceil(taskmanager_memory_mb),
         total_cpus=math.ceil(total_cpu_needs),
     )
 

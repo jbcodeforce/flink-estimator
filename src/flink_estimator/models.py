@@ -21,17 +21,11 @@ class EstimationInput(BaseModel):
     simple_statements: int = Field(default=0, ge=0, description="Number of simple statements")
     medium_statements: int = Field(default=0, ge=0, description="Number of medium complexity statements")
     complex_statements: int = Field(default=0, ge=0, description="Number of complex statements")
-    taskmanager_memory_min_gb: float = Field(
+    taskmanager_memory_gb: float = Field(
         default=2.0,
         gt=0,
         le=512,
         description="Minimum memory per TaskManager (gigabytes)",
-    )
-    taskmanager_memory_max_gb: float = Field(
-        default=8.0,
-        gt=0,
-        le=512,
-        description="Maximum memory per TaskManager (gigabytes)",
     )
     taskmanager_cpu_max: int = Field(
         default=8,
@@ -45,15 +39,6 @@ class EstimationInput(BaseModel):
         if not v or v.isspace():
             raise ValueError('Project name cannot be empty or just whitespace')
         return v.strip()
-
-    @model_validator(mode='after')
-    def taskmanager_memory_bounds(self):
-        if self.taskmanager_memory_max_gb < self.taskmanager_memory_min_gb:
-            raise ValueError(
-                'taskmanager_memory_max_gb must be greater than or equal to '
-                'taskmanager_memory_min_gb'
-            )
-        return self
     
     @property
     def total_statements(self) -> int:
@@ -97,7 +82,7 @@ class JobManagerConfig(BaseModel):
 class TaskManagerConfig(BaseModel):
     """TaskManager configuration specifications"""
     count: int
-    memory_mb_each: int
+    memory_gb_each: int
     total_memory_mb: int
     total_cpus: int
 
