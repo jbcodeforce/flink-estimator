@@ -13,11 +13,11 @@
 <form action="/estimate" method="post" class="estimation-form" novalidate>
     <!-- Tab Navigation -->
     <div class="tab-navigation">
-        <button type="button" class="tab-button active" data-tab="project-workload">
-            Project & Workload
+        <button type="button" class="tab-button active" data-tab="project-hardware">
+            Project & Hardware
         </button>
-        <button type="button" class="tab-button" data-tab="network-hardware">
-            Network & Hardware
+        <button type="button" class="tab-button" data-tab="project-workload">
+            Workload
         </button>
         <button type="button" class="tab-button" data-tab="statement-complexity">
             Flink SQL query Complexity
@@ -25,7 +25,7 @@
     </div>
 
     <!-- Tab 1: Project & Workload -->
-    <div class="tab-content active" id="project-workload">
+    <div class="tab-content active" id="project-hardware">
         <div class="form-section">
             <h2>Project Information</h2>
             <div class="form-group">
@@ -35,107 +35,59 @@
                     value="{{ p.get('project_name', '') }}">
             </div>
         </div>
-
+            <div class="form-section">
+                <h2>Network Configuration</h2>
+                <div class="form-group">
+                    <label for="bandwidth_capacity_gbps">Network Bandwidth Capacity (Gbps):</label>
+                    <input type="number" id="bandwidth_capacity_gbps" name="bandwidth_capacity_gbps"
+                        required min="1" value="{{ p.get('bandwidth_capacity_gbps', 10) }}" placeholder="e.g., 10,000">
+                    <div class="help-text">Available network bandwidth for data transfer (affects
+                        throughput limits) (default 10 Gbps)</div>
+                </div>
+            </div>
         <div class="form-section">
-            <h2>Workload Characteristics</h2>
-
+            <h2>Kubernetes Worker nodes</h2>
             <div class="form-group">
-                <label for="messages_per_second">Expected Messages per Second:</label>
-                <input type="number" id="messages_per_second" name="messages_per_second"
-                    required min="1" placeholder="10000" value="{{ p.get('messages_per_second', 10000) }}">
-                <div class="help-text">The expected throughput of messages your Flink job will
-                    process</div>
+                <label for="nb_worker_nodes">Number of worker nodes (min 3 for HA):</label>
+                <input type="number" id="nb_worker_nodes" name="nb_worker_nodes"
+                    required min="1" step="1"
+                    value="{{ p.get('nb_worker_nodes', 3) }}" placeholder="3">
+                <div class="help-text">Minimum worker nodes to run Task Managers (at least 3 for HA).</div>
             </div>
-
             <div class="form-group">
-                <label for="avg_record_size_bytes">Average Record Size (bytes):</label>
-                <input type="number" id="avg_record_size_bytes" name="avg_record_size_bytes"
-                    required min="1" placeholder="1024" value="{{ p.get('avg_record_size_bytes', 1024) }}">
-                <div class="help-text">Average size of each message/record in bytes</div>
-            </div>
-
-            <div class="form-group">
-                <label for="expected_latency_seconds">Expected Latency (seconds):</label>
-                <input type="number" id="expected_latency_seconds"
-                    name="expected_latency_seconds" step="0.1" min="0.1"
-                    value="{{ p.get('expected_latency_seconds', 1.0) }}"
-                    placeholder="e.g., 1.0">
-                <div class="help-text">Expected end-to-end processing latency in seconds</div>
-            </div>
-
-            <div class="form-group">
-                <label for="num_distinct_keys">Number of Distinct Keys:</label>
-                <input type="number" id="num_distinct_keys" name="num_distinct_keys" required
-                    min="1" placeholder="e.g., 1000000" value="{{ p.get('num_distinct_keys', 100000) }}">
-                <div class="help-text">Number of distinct partition keys (affects parallelism
-                    and state distribution)</div>
-            </div>
-
-            <div class="form-group">
-                <label for="data_skew_risk">Data Skew Risk:</label>
-                <select id="data_skew_risk" name="data_skew_risk" required>
-                    {% set skew = p.get('data_skew_risk', 'low') %}
-                    <option value="low" {% if skew == 'low' %}selected{% endif %}>Low - Data is evenly distributed across keys</option>
-                    <option value="medium" {% if skew == 'medium' %}selected{% endif %}>Medium - Some keys have more data than
-                        others</option>
-                    <option value="high" {% if skew == 'high' %}selected{% endif %}>High - Significant data concentration on few keys
-                    </option>
+                <label for="worker_node_type">Worker node type:</label>
+                <select id="worker_node_type" name="worker_node_type" required>
+                    {% set wnt = p.get('worker_node_type', 'bare_metal') %}
+                    <option value="bare_metal" {% if wnt == 'bare_metal' %}selected{% endif %}>Bare metal</option>
+                    <option value="VM" {% if wnt == 'VM' %}selected{% endif %}>VM</option>
                 </select>
-                <div class="help-text">Risk of uneven data distribution which can cause hotspots
-                    and performance issues</div>
             </div>
-
-            <!-- Navigation Button -->
-            <div class="tab-navigation-buttons">
-                <button type="button" class="cta-button"
-                    onclick="switchToTab('network-hardware')">
-                    Next: Network & Hardware →
-                </button>
+            <div class="form-group" id="worker-node-t-size-group">
+                <label for="worker_node_t_size">VM instance size (T‑shirt):</label>
+                <select id="worker_node_t_size" name="worker_node_t_size">
+                    {% set ts = p.get('worker_node_t_size') %}
+                    <option value="" {% if not ts %}selected{% endif %}>—</option>
+                    <option value="S" {% if ts == 'S' %}selected{% endif %}>S</option>
+                    <option value="M" {% if ts == 'M' %}selected{% endif %}>M</option>
+                    <option value="L" {% if ts == 'L' %}selected{% endif %}>L</option>
+                </select>
+                <div class="help-text">Required when worker node type is VM. Sizes: <strong>S</strong> 16&nbsp;GB / 8&nbsp;vCPU · <strong>M</strong> 64&nbsp;GB / 16&nbsp;vCPU · <strong>L</strong> 96&nbsp;GB / 48&nbsp;vCPU.</div>
             </div>
-
-        </div>
-    </div>
-
-    <!-- Tab 2: Network & Hardware -->
-    <div class="tab-content" id="network-hardware">
-        <div class="form-section">
-            <h2>Network Configuration</h2>
-
             <div class="form-group">
-                <label for="bandwidth_capacity_mbps">Network Bandwidth Capacity (Mbps):</label>
-                <input type="number" id="bandwidth_capacity_mbps" name="bandwidth_capacity_mbps"
-                    required min="1" value="{{ p.get('bandwidth_capacity_mbps', 10000) }}" placeholder="e.g., 10000">
-                <div class="help-text">Available network bandwidth for data transfer (affects
-                    throughput limits)</div>
+                <label for="worker_node_memory_gb">Target memory per worker for sizing (GB):</label>
+                <input type="number" id="worker_node_memory_gb" name="worker_node_memory_gb"
+                     min=".5" step="any" required
+                     value="{{ p.get('worker_node_memory_gb', 2.0) }}" placeholder="2.0">
+                <div class="help-text">For <strong>VM</strong>, set automatically from T‑shirt size.</div>
             </div>
-        </div>
-
-        <div class="form-section">
-            <h2>TaskManager memory (per instance)</h2>
             <div class="form-group">
-                <label for="taskmanager_memory_min_gb">Memory (GB):</label>
-                <input type="number" id="taskmanager_memory_min_gb" name="taskmanager_memory_min_gb"
-                     min=".5" value="{{ p.get('taskmanager_memory_gb', 2.0) }}" placeholder="2.0">
-                <div class="help-text">Memory per TaskManager (k8s expected worker nodes capacity)</div>
-            </div>
-       <!-- 
-            <div class="form-group">
-                <label for="taskmanager_memory_max_gb">Maximum memory (GB):</label>
-                <input type="number" id="taskmanager_memory_max_gb" name="taskmanager_memory_max_gb"
-                     min="1" value="{{ p.get('taskmanager_memory_max_gb', 8.0) }}" placeholder="8.0">
-                <div class="help-text">Upper bound for recommended TaskManager memory (instance shape limit)</div>
-            </div>
- -->
-            <div class="form-group">
-                <label for="taskmanager_cpu_max">Estimated CPU per TaskManager (cores):</label>
-                <input type="number" id="taskmanager_cpu_max" name="taskmanager_cpu_max"
+                <label for="worker_node_cpu_max">Max CPU cores per worker (cores):</label>
+                <input type="number" id="worker_node_cpu_max" name="worker_node_cpu_max"
                     required min="2" max="256" step="1"
-                    value="{{ p.get('taskmanager_cpu_max', 8) }}" placeholder="8">
-                <!-- Minimum is 2 CPUs (Flink TaskManagers need enough slots for typical operator chains). -->
-                <div class="help-text">Upper bound for CPU cores per TaskManager pod or host. Minimum is 2 CPUs.</div>
+                    value="{{ p.get('worker_node_cpu_max', 8) }}" placeholder="8">
+                <div class="help-text">For <strong>VM</strong>, set automatically from T‑shirt size.</div>
             </div>
         </div>
-
         <div class="form-section">
             <h2>Hardware Considerations</h2>
             <div class="info-box">
@@ -154,15 +106,84 @@
 
             <!-- Navigation Buttons -->
             <div class="tab-navigation-buttons">
-                <button type="button" class="btn-previous"
-                    onclick="switchToTab('project-workload')">
-                    ← Previous: Project & Workload
-                </button>
                 <button type="button" class="btn-next"
-                    onclick="switchToTab('statement-complexity')">
-                    Next: SQL Queries Complexity →
+                    onclick="switchToTab('project-workload')">
+                    Next: Workload →
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Tab 2: Workload -->
+    <div class="tab-content" id="project-workload">
+        <div class="form-section">
+            <h2>Workload Characteristics</h2>
+            <div class="help-text">If you may not know the following values, the tool will use some defaults.</div>
+            <div class="form-group">
+                <label for="number_flink_applications">Number of Flink Applications:</label>
+                <input type="number" id="number_flink_applications" name="number_flink_applications"
+                    required min="1" placeholder="1" value="{{ p.get('number_flink_applications', 1) }}">
+                <div class="help-text">The number of Flink applications you will run in th cluster. If more than one, the next parameters are averages.</div>
+            </div>
+            <div class="form-group">
+                <label for="messages_per_second">Expected Messages per Second:</label>
+                <input type="number" id="messages_per_second" name="messages_per_second"
+                    required min="1" placeholder="10000" value="{{ p.get('messages_per_second', 10000) }}">
+                <div class="help-text">The expected throughput of messages your Flink job will
+                    process in average</div>
+            </div>
+
+        
+            <div class="form-group">
+                <label for="avg_record_size_bytes">Average Record Size (bytes):</label>
+                <input type="number" id="avg_record_size_bytes" name="avg_record_size_bytes"
+                    required min="1" placeholder="1024" value="{{ p.get('avg_record_size_bytes', 1024) }}">
+                <div class="help-text">Average size of each message/record in bytes</div>
+            </div>
+
+            <div class="form-group">
+                <label for="expected_latency_seconds">Expected Latency (seconds):</label>
+                <input type="number" id="expected_latency_seconds"
+                    name="expected_latency_seconds" step="0.1" min="0.1"
+                    value="{{ p.get('expected_latency_seconds',5.0) }}"
+                    placeholder="e.g., 5.0">
+                <div class="help-text">Expected end-to-end processing latency in seconds</div>
+            </div>
+
+            <div class="form-group">
+                <label for="num_distinct_keys">Number of Distinct Keys:</label>
+                <input type="number" id="num_distinct_keys" name="num_distinct_keys" required
+                    min="1" placeholder="e.g., 1000000" value="{{ p.get('num_distinct_keys', 100000) }}">
+                <div class="help-text">Number of distinct partition keys (affects parallelism
+                    and Flink state distribution)</div>
+            </div>
+
+            <div class="form-group">
+                <label for="data_skew_risk">Data Skew Risk:</label>
+                <select id="data_skew_risk" name="data_skew_risk" required>
+                    {% set skew = p.get('data_skew_risk', 'low') %}
+                    <option value="low" {% if skew == 'low' %}selected{% endif %}>Low - Data is evenly distributed across keys</option>
+                    <option value="medium" {% if skew == 'medium' %}selected{% endif %}>Medium - Some keys have more data than
+                        others</option>
+                    <option value="high" {% if skew == 'high' %}selected{% endif %}>High - Significant data concentration on few keys
+                    </option>
+                </select>
+                <div class="help-text">Risk of uneven data distribution which can cause hotspots
+                    and performance issues</div>
+            </div>
+
+            <!-- Navigation Button -->
+            <div class="tab-navigation-buttons">
+                <button type="button" class="btn-previous"
+                onclick="switchToTab('project-hardware')">
+                ← Previous: Project & Hardware
+                </button>
+                <button type="button" class="cta-button"
+                    onclick="switchToTab('statement-complexity')">
+                    Next: Flink Complexity →
+                </button>
+            </div>
+
         </div>
     </div>
 
@@ -172,7 +193,7 @@
             <h2>Flink SQL Queries Complexity</h2>
             <p class="section-description">
                 Categorize your Flink SQL queries by complexity. This helps estimate processing
-                overhead.
+                overhead. Use the default values if you are not sure.
             </p>
 
             <div class="complexity-grid">
@@ -180,13 +201,13 @@
                     <h3>Simple SQL Queries</h3>
                     <p>SELECT, basic WHERE clauses, simple projections</p>
                     <input type="number" id="simple_statements" name="simple_statements" min="0"
-                        value="{{ p.get('simple_statements', 1) }}" placeholder="0">
+                        value="{{ p.get('simple_statements', 10) }}" placeholder="10">
                     <div class="complexity-examples">
                         <strong>Examples:</strong>
                         <ul>
                             <li>SELECT id, name FROM users</li>
                             <li>WHERE status = 'active'</li>
-                            <li>Basic field filtering</li>
+                            <li>Basic field filtering, and data transformation</li>
                         </ul>
                     </div>
                 </div>
@@ -195,7 +216,7 @@
                     <h3>Medium SQL Queries</h3>
                     <p>JOINs, GROUP BY, basic window operations, aggregations</p>
                     <input type="number" id="medium_statements" name="medium_statements" min="0"
-                        value="{{ p.get('medium_statements', 1) }}" placeholder="0">
+                        value="{{ p.get('medium_statements', 5) }}" placeholder="5">
                     <div class="complexity-examples">
                         <strong>Examples:</strong>
                         <ul>
@@ -227,8 +248,8 @@
             <!-- Navigation Buttons -->
             <div class="tab-navigation-buttons">
                 <button type="button" class="btn-previous"
-                    onclick="switchToTab('network-hardware')">
-                    ← Previous: Network & Hardware
+                    onclick="switchToTab('project-workload')">
+                    ← Previous: Workload
                 </button>
             </div>
         </div>
@@ -250,8 +271,51 @@
 
 {% block scripts %}
 <script>
+    var VM_TSHIRT_SKU = { S: { gb: 16, cpu: 8 }, M: { gb: 64, cpu: 16 }, L: { gb: 96, cpu: 48 } };
+
+    function applyVmTshirtSku() {
+        var typeEl = document.getElementById('worker_node_type');
+        var tsEl = document.getElementById('worker_node_t_size');
+        var memEl = document.getElementById('worker_node_memory_gb');
+        var cpuEl = document.getElementById('worker_node_cpu_max');
+        if (!typeEl || !memEl || !cpuEl) return;
+        if (typeEl.value !== 'VM' || !tsEl || !tsEl.value) return;
+        var sku = VM_TSHIRT_SKU[tsEl.value];
+        if (!sku) return;
+        memEl.value = sku.gb;
+        cpuEl.value = sku.cpu;
+    }
+
+    function syncWorkerNodeTypeUI() {
+        const typeEl = document.getElementById('worker_node_type');
+        const tsEl = document.getElementById('worker_node_t_size');
+        const tsGroup = document.getElementById('worker-node-t-size-group');
+        const isVm = typeEl && typeEl.value === 'VM';
+        if (tsEl) {
+            tsEl.disabled = !isVm;
+            tsEl.required = !!isVm;
+            if (!isVm) {
+                tsEl.value = '';
+            }
+        }
+        if (tsGroup) {
+            tsGroup.style.opacity = isVm ? '1' : '0.65';
+        }
+        applyVmTshirtSku();
+    }
+
     // Tab functionality
     document.addEventListener('DOMContentLoaded', function () {
+        syncWorkerNodeTypeUI();
+        const wnt = document.getElementById('worker_node_type');
+        if (wnt) {
+            wnt.addEventListener('change', syncWorkerNodeTypeUI);
+        }
+        const tsSel = document.getElementById('worker_node_t_size');
+        if (tsSel) {
+            tsSel.addEventListener('change', applyVmTshirtSku);
+        }
+
         const tabButtons = document.querySelectorAll('.tab-button');
         const tabContents = document.querySelectorAll('.tab-content');
 
@@ -295,7 +359,7 @@
         const formData = new FormData(form);
 
         // Validate required fields
-        const requiredFields = ['project_name', 'messages_per_second', 'avg_record_size_bytes', 'num_distinct_keys', 'data_skew_risk', 'bandwidth_capacity_mbps'];
+        const requiredFields = ['project_name', 'messages_per_second', 'avg_record_size_bytes', 'num_distinct_keys', 'data_skew_risk', 'bandwidth_capacity_gbps'];
         for (let field of requiredFields) {
             if (!formData.get(field)) {
                 alert(`Please fill in the ${field.replace('_', ' ')} field.`);

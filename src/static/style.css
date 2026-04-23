@@ -1198,6 +1198,21 @@ footer {
     margin-bottom: 50px;
 }
 
+.home-deploy-diagram {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin: 0 auto 40px;
+    max-width: 100%;
+}
+
+.home-deploy-diagram img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 4px 24px var(--shadow-light);
+}
+
 .tile {
     background: var(--card-bg);
     border-radius: 12px;

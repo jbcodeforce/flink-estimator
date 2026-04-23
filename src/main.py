@@ -18,7 +18,7 @@ from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, Optional
 import json
 import os
 from datetime import datetime
@@ -50,26 +50,44 @@ print(f"Templates directory exists: {os.path.exists(templates_dir)}")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
+
+def _normalize_worker_node_t_size(
+    raw: Optional[str],
+) -> Optional[Literal["S", "M", "L"]]:
+    """Map empty form value to None; uppercase S/M/L for Pydantic."""
+    if raw is None:
+        return None
+    s = str(raw).strip().upper()
+    if not s:
+        return None
+    if s in ("S", "M", "L"):
+        return s  # type: ignore[return-value]
+    raise ValueError("worker_node_t_size must be S, M, or L")
+
+
 _PREFILL_INT_KEYS = frozenset(
     {
         "messages_per_second",
         "avg_record_size_bytes",
         "num_distinct_keys",
-        "bandwidth_capacity_mbps",
+        "bandwidth_capacity_gbps",
+        "number_flink_applications",
         "simple_statements",
         "medium_statements",
         "complex_statements",
-        "taskmanager_cpu_max",
+        "worker_node_cpu_max",
+        "nb_worker_nodes",
     }
 )
 _PREFILL_FLOAT_KEYS = frozenset(
     {
         "expected_latency_seconds",
-        "taskmanager_memory_min_gb",
-        "taskmanager_memory_max_gb",
+        "worker_node_memory_gb",
     }
 )
-_PREFILL_STR_KEYS = frozenset({"project_name", "data_skew_risk"})
+_PREFILL_STR_KEYS = frozenset(
+    {"project_name", "data_skew_risk", "worker_node_type", "worker_node_t_size"}
+)
 
 
 def prefill_from_query_params(query_params) -> dict[str, Any]:
@@ -91,6 +109,18 @@ def prefill_from_query_params(query_params) -> dict[str, Any]:
             except ValueError:
                 pass
     return out
+
+
+def form_prefill_from_input(input_params: EstimationInput) -> dict[str, Any]:
+    """
+    Map EstimationInput to estimation.html field names (GB for memory, optional empty t_size).
+    """
+    d: dict[str, Any] = dict(input_params.model_dump())
+    mb = d.pop("worker_node_memory_mb", 0.0)
+    d["worker_node_memory_gb"] = float(mb) / 1024.0
+    if d.get("worker_node_t_size") is None:
+        d["worker_node_t_size"] = ""
+    return d
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -129,33 +159,40 @@ async def estimate_resources(
     avg_record_size_bytes: Annotated[int, Form()],
     num_distinct_keys: Annotated[int, Form()] = 100_000,
     data_skew_risk: Annotated[str, Form()] = "medium",
-    bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    bandwidth_capacity_gbps: Annotated[int, Form()] = 10,
     expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0,
-    taskmanager_memory_min_gb: Annotated[float, Form()] = 2.0,
-    taskmanager_memory_max_gb: Annotated[float, Form()] = 8.0,
-    taskmanager_cpu_max: Annotated[int, Form()] = 8,
+    worker_node_memory_gb: Annotated[float, Form()] = 2.0,
+    worker_node_cpu_max: Annotated[int, Form()] = 8,
+    nb_worker_nodes: Annotated[int, Form()] = 3,
+    worker_node_type: Annotated[str, Form()] = "bare_metal",
+    worker_node_t_size: Annotated[Optional[str], Form()] = None,
+    number_flink_applications: Annotated[int, Form()] = 1,
 ):
     """Process the estimation request and return results."""
     
     try:
+        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
         # Create EstimationInput from form data
         input_params = EstimationInput(
             project_name=project_name,
+            number_flink_applications=number_flink_applications,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
-            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            bandwidth_capacity_gbps=bandwidth_capacity_gbps,
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements,
-            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
-            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
-            taskmanager_cpu_max=taskmanager_cpu_max,
+            worker_node_memory_mb=worker_node_memory_mb,
+            worker_node_cpu_max=worker_node_cpu_max,
+            nb_worker_nodes=nb_worker_nodes,
+            worker_node_type=worker_node_type,  # type: ignore[arg-type]
+            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
         )
         
         # Calculate estimation using Pydantic models
@@ -169,7 +206,7 @@ async def estimate_resources(
                 "estimation": estimation_result,
                 "success": True,
                 "active_page": "results",
-                "prefill": input_params.model_dump(),
+                "prefill": form_prefill_from_input(input_params),
             },
         )
     except Exception as e:
@@ -191,33 +228,40 @@ async def api_estimate(
     project_name: str,
     messages_per_second: int,
     avg_record_size_bytes: int,
+    number_flink_applications: int = 1,
     num_distinct_keys: int = 100_000,
     data_skew_risk: str = "medium",
-    bandwidth_capacity_mbps: int = 1000,
+    bandwidth_capacity_gbps: int = 10,
     expected_latency_seconds: float = 1.0,
     simple_statements: int = 0,
     medium_statements: int = 0,
     complex_statements: int = 0,
-    taskmanager_memory_min_gb: float = 2.0,
-    taskmanager_memory_max_gb: float = 8.0,
-    taskmanager_cpu_max: int = 8,
+    worker_node_memory_gb: float = 2.0,
+    worker_node_cpu_max: int = 8,
+    nb_worker_nodes: int = 3,
+    worker_node_type: str = "bare_metal",
+    worker_node_t_size: Optional[str] = None,
 ):
     """API endpoint for programmatic access to estimation via query parameters."""
     try:
+        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
         input_params = EstimationInput(
             project_name=project_name,
+            number_flink_applications=number_flink_applications,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
-            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            bandwidth_capacity_gbps=bandwidth_capacity_gbps,
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements,
-            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
-            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
-            taskmanager_cpu_max=taskmanager_cpu_max,
+            worker_node_memory_mb=worker_node_memory_mb,
+            worker_node_cpu_max=worker_node_cpu_max,
+            nb_worker_nodes=nb_worker_nodes,
+            worker_node_type=worker_node_type,  # type: ignore[arg-type]
+            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
         )
         return calculate_flink_estimation(input_params)
     except Exception as e:
@@ -246,32 +290,39 @@ async def save_estimation(
     avg_record_size_bytes: Annotated[int, Form()],
     num_distinct_keys: Annotated[int, Form()] = 100_000,
     data_skew_risk: Annotated[str, Form()] = "medium",
-    bandwidth_capacity_mbps: Annotated[int, Form()] = 1000,
+    bandwidth_capacity_gbps: Annotated[int, Form()] = 10,
     expected_latency_seconds: Annotated[float, Form()] = 1.0,
     simple_statements: Annotated[int, Form()] = 0,
     medium_statements: Annotated[int, Form()] = 0,
     complex_statements: Annotated[int, Form()] = 0,
-    taskmanager_memory_min_gb: Annotated[float, Form()] = 2.0,
-    taskmanager_memory_max_gb: Annotated[float, Form()] = 8.0,
-    taskmanager_cpu_max: Annotated[int, Form()] = 8,
+    worker_node_memory_gb: Annotated[float, Form()] = 2.0,
+    worker_node_cpu_max: Annotated[int, Form()] = 8,
+    nb_worker_nodes: Annotated[int, Form()] = 3,
+    worker_node_type: Annotated[str, Form()] = "bare_metal",
+    worker_node_t_size: Annotated[Optional[str], Form()] = None,
+    number_flink_applications: Annotated[int, Form()] = 1,
 ):
     """Save estimation results to JSON file."""
     try:
+        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
         # Create EstimationInput from form data
         input_params = EstimationInput(
             project_name=project_name,
+            number_flink_applications=number_flink_applications,
             messages_per_second=messages_per_second,
             avg_record_size_bytes=avg_record_size_bytes,
             num_distinct_keys=num_distinct_keys,
             data_skew_risk=data_skew_risk,
-            bandwidth_capacity_mbps=bandwidth_capacity_mbps,
+            bandwidth_capacity_gbps=bandwidth_capacity_gbps,
             expected_latency_seconds=expected_latency_seconds,
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements,
-            taskmanager_memory_min_gb=taskmanager_memory_min_gb,
-            taskmanager_memory_max_gb=taskmanager_memory_max_gb,
-            taskmanager_cpu_max=taskmanager_cpu_max,
+            worker_node_memory_mb=worker_node_memory_mb,
+            worker_node_cpu_max=worker_node_cpu_max,
+            nb_worker_nodes=nb_worker_nodes,
+            worker_node_type=worker_node_type,  # type: ignore[arg-type]
+            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
         )
         
         # Calculate estimation using Pydantic models
@@ -404,7 +455,7 @@ async def reload_estimation(request: Request, filename: str):
                 "saved_filename": filename,
                 "saved_at": saved_estimation.metadata.saved_at,
                 "active_page": "results",
-                "prefill": saved_estimation.input_parameters.model_dump(),
+                "prefill": form_prefill_from_input(saved_estimation.input_parameters),
             },
         )
         

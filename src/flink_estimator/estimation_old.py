@@ -200,12 +200,13 @@ def _compute_taskmanager_layout(
     """
     Size TaskManagers so total memory and CPU fit.
 
-    Memory-bound: use as few TMs as possible by filling each up to taskmanager_memory_max_gb
-    (a larger TM can run more chained operators / statements). CPU-bound floor still applies.
+    Memory-bound: use as few TMs as possible by filling each up to worker_node_memory_gb.
+    CPU-bound floor still applies.
     """
-    min_tm_mb = max(1, int(round(input_params.taskmanager_memory_min_gb * 1024)))
-    max_tm_mb = max(min_tm_mb, int(round(input_params.taskmanager_memory_max_gb * 1024)))
-    tm_cpu_cap = input_params.taskmanager_cpu_max
+    tm_slot_mb = max(1, int(round(input_params.worker_node_memory_mb * 1024)))
+    min_tm_mb = tm_slot_mb
+    max_tm_mb = tm_slot_mb
+    tm_cpu_cap = input_params.worker_node_cpu_max
     taskmanager_cpu_cores = min(
         tm_cpu_cap,
         max(MIN_TASKMANAGER_CPU_CORES, total_cpu_cores // 2),
@@ -309,7 +310,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         total_throughput_mb_per_sec=round(total_throughput_mb_per_sec, 2),
         num_distinct_keys=input_params.num_distinct_keys,
         data_skew_risk=input_params.data_skew_risk,
-        bandwidth_capacity_mbps=input_params.bandwidth_capacity_mbps,
+        bandwidth_capacity_mbps=input_params.bandwidth_capacity_gbps,
         expected_latency_seconds=input_params.expected_latency_seconds,
         simple_statements=input_params.simple_statements,
         medium_statements=input_params.medium_statements,
@@ -384,7 +385,7 @@ def calculate_flink_estimation_v0(input_params: EstimationInput) -> EstimationRe
 
     bandwidth_cpu_penalty = _bandwidth_cpu_penalty(
         total_throughput_mb_per_sec,
-        input_params.bandwidth_capacity_mbps,
+        input_params.bandwidth_capacity_gbps,
     )
     processing_load = _compute_processing_load(input_params)
     total_memory_mb, _ = _compute_memory_mb(
@@ -417,7 +418,7 @@ def calculate_flink_estimation_v0(input_params: EstimationInput) -> EstimationRe
         total_throughput_mb_per_sec=round(total_throughput_mb_per_sec, 2),
         num_distinct_keys=input_params.num_distinct_keys,
         data_skew_risk=input_params.data_skew_risk,
-        bandwidth_capacity_mbps=input_params.bandwidth_capacity_mbps,
+        bandwidth_capacity_mbps=input_params.bandwidth_capacity_gbps,
         expected_latency_seconds=input_params.expected_latency_seconds,
         simple_statements=input_params.simple_statements,
         medium_statements=input_params.medium_statements,

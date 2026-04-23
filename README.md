@@ -12,7 +12,7 @@ A web-based tool to estimate Apache Flink cluster resource requirements based on
 - **Save & Manage Estimations**: Save estimations as JSON files with metadata
 - **Download & Preview**: View saved estimations and download them for record keeping
 
-![](./docs/images/home_page.png)
+![](./docs/images/home-page.png)
 
 ## Quick Start
 

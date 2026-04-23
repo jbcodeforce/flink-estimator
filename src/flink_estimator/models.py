@@ -8,42 +8,77 @@ estimation results, and file persistence.
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 
+# When worker_node_type is VM, memory and CPU are derived from worker_node_t_size (MB / cores).
+VM_TSHIRT_MB_CPU = {
+    # memory, cpu
+    "S": (16384, 8),
+    "M": (65536, 16),
+    "L": (96448, 48),
+}
 
 class EstimationInput(BaseModel):
     """Input parameters for Flink estimation"""
     project_name: str = Field(..., min_length=1, max_length=100, description="Name of the project")
-    messages_per_second: int = Field(..., gt=0, description="Expected messages per second")
-    avg_record_size_bytes: int = Field(..., gt=0, description="Average record size in bytes")
+    messages_per_second: int = Field(default=5000, gt=0, description="Expected messages per second")
+    avg_record_size_bytes: int = Field(default=512, gt=0, description="Average record size in bytes")
+    number_flink_applications: int = Field(default=1, ge=1, description="Number of Flink applications")
     num_distinct_keys: int = Field(default=100_000, ge=1, description="Number of distinct keys for partitioning")
-    data_skew_risk: Literal["low", "medium", "high"] = Field(default="medium", description="Risk level of data skew")
-    bandwidth_capacity_mbps: int = Field(default=1000, gt=0, description="Network bandwidth capacity in Mbps")
-    expected_latency_seconds: float = Field(default=1.0, gt=0, description="Expected end-to-end latency in seconds")
-    simple_statements: int = Field(default=0, ge=0, description="Number of simple statements")
-    medium_statements: int = Field(default=0, ge=0, description="Number of medium complexity statements")
-    complex_statements: int = Field(default=0, ge=0, description="Number of complex statements")
-    taskmanager_memory_gb: float = Field(
-        default=2.0,
-        gt=0,
-        le=512,
-        description="Minimum memory per TaskManager (gigabytes)",
+    data_skew_risk: Literal["low", "medium", "high"] = Field(default="low", description="Risk level of data skew")
+    bandwidth_capacity_gbps: int = Field(
+        default=10, gt=0, description="Network bandwidth capacity in Gbps (decimal gigabits per second)"
     )
-    taskmanager_cpu_max: int = Field(
-        default=8,
+    expected_latency_seconds: float = Field(default=1.0, gt=0, description="Expected end-to-end latency in seconds")
+    simple_statements: int = Field(default=2, ge=0, description="Number of simple statements")
+    medium_statements: int = Field(default=1, ge=0, description="Number of medium complexity statements")
+    complex_statements: int = Field(default=1, ge=0, description="Number of complex statements")
+
+    worker_node_memory_mb: float = Field(
+        default=VM_TSHIRT_MB_CPU["S"][0],
+        gt=0,
+        le=512 * 1024,
+        description="Target memory per worker node for sizing (MB); web form overwrites from GB; VM from T-shirt",
+    )
+    worker_node_cpu_max: int = Field(
+        default=VM_TSHIRT_MB_CPU["S"][1],
         ge=2,
         le=256,
-        description="Maximum CPU cores per TaskManager (instance shape limit)",
+        description="Maximum CPU cores per worker node / TaskManager (instance shape limit)",
+    )
+    nb_worker_nodes: int = Field(
+        default=3,
+        ge=1,
+        description="Number of worker nodes (floor for total_nodes in estimates)",
+    )
+    worker_node_type: Literal["bare_metal", "VM"] = Field(
+        default="bare_metal",
+        description="Whether workers are bare metal or VMs",
+    )
+    worker_node_t_size: Optional[Literal["S", "M", "L"]] = Field(
+        default=None,
+        description="VM T-shirt size (required when worker_node_type is VM)",
     )
 
-    @field_validator('project_name')
+    @field_validator("project_name")
     def validate_project_name(cls, v):
         if not v or v.isspace():
-            raise ValueError('Project name cannot be empty or just whitespace')
+            raise ValueError("Project name cannot be empty or just whitespace")
         return v.strip()
-    
+
+    @model_validator(mode="after")
+    def vm_tshirt_requires_size_and_sets_sku(self):
+        if self.worker_node_type != "VM":
+            return self
+        if self.worker_node_t_size is None:
+            raise ValueError("worker_node_t_size is required when worker_node_type is VM")
+        mem_mb, cpus = VM_TSHIRT_MB_CPU[self.worker_node_t_size]
+        self.worker_node_memory_mb = mem_mb
+        self.worker_node_cpu_max = cpus
+        return self
+
     @property
     def total_statements(self) -> int:
         return self.simple_statements + self.medium_statements + self.complex_statements
-    
+
     @property
     def total_throughput_mb_per_sec(self) -> float:
         return (self.messages_per_second * self.avg_record_size_bytes) / (1024 * 1024)
@@ -62,7 +97,10 @@ class InputSummary(BaseModel):
     medium_statements: int
     complex_statements: int
     total_statements: int
-    tm_memory_capacity_gb: float
+    worker_node_memory_capacity_mb: float
+    worker_node_cpu_capacity: int
+    nb_worker_nodes: int
+    worker_node_t_size: Optional[Literal["S", "M", "L"]]
 
 
 class ResourceEstimates(BaseModel):
@@ -75,6 +113,7 @@ class ResourceEstimates(BaseModel):
 
 class JobManagerConfig(BaseModel):
     """JobManager configuration specifications"""
+    count: int
     memory_mb: int
     cpu_cores: float = Field(..., ge=0.5, description="CPU cores (Kubernetes cpu units; fractional allowed)")
 
@@ -82,15 +121,20 @@ class JobManagerConfig(BaseModel):
 class TaskManagerConfig(BaseModel):
     """TaskManager configuration specifications"""
     count: int
-    memory_gb_each: int
     total_memory_mb: int
     total_cpus: int
+    memory_gb_each: float
 
 
 class ClusterRecommendations(BaseModel):
     """Cluster configuration recommendations"""
     jobmanager: JobManagerConfig
     taskmanagers: TaskManagerConfig
+
+class CapacityAnalysis(BaseModel):
+    """Capacity analysis"""
+    total_flink_statements: int
+    total_flink_applications: int
 
 
 class ScalingRecommendations(BaseModel):
@@ -107,7 +151,7 @@ class EstimationResult(BaseModel):
     resource_estimates: ResourceEstimates
     cluster_recommendations: ClusterRecommendations
     scaling_recommendations: Optional[ScalingRecommendations] = None
-
+    capacity_analysis: CapacityAnalysis
 
 class EstimationMetadata(BaseModel):
     """Metadata for saved estimations"""

@@ -11,7 +11,24 @@
 {% block main_class %}class="home-main"{% endblock %}
 
 {% block content %}
-<div class="tiles-container">
+
+<div class="welcome-section">
+    <div class="welcome-content">
+        <h2>Welcome to Flink Resource Estimator</h2>
+        <p>
+            This tool helps you determine the optimal cluster size for your Apache Flink workloads. 
+            By analyzing your data throughput, statement complexity, and performance requirements, 
+            and current worker node characteristics, we provide tailored recommendations for CPU, memory, and cluster configuration.
+        </p>
+        <img src="/static/k8s-deploy.png" alt="Kubernetes deployment diagram for Flink on the cluster" decoding="async" loading="lazy" />
+   
+        <div class="cta-section">
+            <p class="cta-text">Ready to optimize your Flink cluster?</p>
+        </div>
+    </div>
+</div>
+
+<div class="tiles-container"> 
     <div class="tile" onclick="window.location.href='/estimation-form'">
         <div class="tile-icon">🧮</div>
         <h2 class="tile-title">Start New Estimation</h2>
@@ -46,23 +63,8 @@
     </div>
 </div>
 
-<div class="welcome-section">
-    <div class="welcome-content">
-        <h2>Welcome to Flink Resource Estimator</h2>
-        <p>
-            This tool helps you determine the optimal cluster size for your Apache Flink workloads. 
-            By analyzing your data throughput, statement complexity, and performance requirements, 
-            we provide tailored recommendations for CPU, memory, and cluster configuration.
-        </p>
 
-        <div class="cta-section">
-            <p class="cta-text">Ready to optimize your Flink cluster?</p>
-            <a href="/estimation-form" class="cta-button">
-                Start Your First Estimation
-            </a>
-        </div>
-    </div>
-</div>
+
 {% endblock %}
 
 {% block scripts %}

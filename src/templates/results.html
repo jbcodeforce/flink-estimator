@@ -55,9 +55,9 @@
                 </div>
             </div>
         </div>
-
+        {% set jm = estimation.cluster_recommendations.jobmanager %}
         {% set tm = estimation.cluster_recommendations.taskmanagers %}
-        {% set tm_memory_mb = tm.memory_gb_each * 1024 %}
+        {% set tm_memory_mb = tm.total_memory_mb %}
         {% set tm_cpu_each = (tm.total_cpus + tm.count - 1) // tm.count if tm.count else 0 %}
         <!-- Resource Estimates -->
         <div class="result-section">
@@ -78,11 +78,6 @@
                     <div class="resource-value">{{ estimation.resource_estimates.total_nodes }}</div>
                     <div class="resource-subtext">Recommended cores</div>
                 </div>
-                <div class="resource-card">
-                    <h3>Processing Load</h3>
-                    <div class="resource-value">{{ estimation.resource_estimates.processing_load_score }}</div>
-                    <div class="resource-subtext">Complexity score</div>
-                </div>
             </div>
         </div>
 
@@ -94,6 +89,10 @@
                 <div class="config-section">
                     <h3>JobManager</h3>
                     <div class="config-details">
+                        <div class="config-item">
+                            <span class="config-label">Count:</span>
+                            <span class="config-value">{{ "{:,}".format(estimation.cluster_recommendations.jobmanager.count) }}</span>
+                        </div>
                         <div class="config-item">
                             <span class="config-label">Memory:</span>
                             <span class="config-value">{{ "{:,}".format(estimation.cluster_recommendations.jobmanager.memory_mb) }} MB</span>
@@ -115,10 +114,6 @@
                         <div class="config-item">
                             <span class="config-label">Memory per TM:</span>
                             <span class="config-value">{{ "{:,}".format(tm_memory_mb) }} MB ({{ tm.memory_gb_each }} GB)</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">CPU per TM:</span>
-                            <span class="config-value">{{ tm_cpu_each }}</span>
                         </div>
                         <div class="config-item">
                             <span class="config-label">Total Memory:</span>
@@ -209,24 +204,10 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
 {% if success %}
 <!-- Hidden form for saving estimation -->
 <form id="saveForm" style="display: none;" action="/save-estimation" method="post">
-    <input type="hidden" name="project_name" value="{{ project_name }}">
-    <input type="hidden" name="messages_per_second" value="{{ estimation.input_summary.messages_per_second }}">
-    <input type="hidden" name="avg_record_size_bytes" value="{{ estimation.input_summary.avg_record_size_bytes }}">
-    <input type="hidden" name="num_distinct_keys" value="{{ estimation.input_summary.num_distinct_keys }}">
-    <input type="hidden" name="data_skew_risk" value="{{ estimation.input_summary.data_skew_risk }}">
-    <input type="hidden" name="bandwidth_capacity_mbps" value="{{ estimation.input_summary.bandwidth_capacity_mbps }}">
-    <input type="hidden" name="expected_latency_seconds" value="{{ estimation.input_summary.expected_latency_seconds }}">
-    <input type="hidden" name="simple_statements" value="{{ estimation.input_summary.simple_statements }}">
-    <input type="hidden" name="medium_statements" value="{{ estimation.input_summary.medium_statements }}">
-    <input type="hidden" name="complex_statements" value="{{ estimation.input_summary.complex_statements }}">
     {% if prefill is not none %}
-    <input type="hidden" name="taskmanager_memory_min_gb" value="{{ prefill.taskmanager_memory_min_gb }}">
-    <input type="hidden" name="taskmanager_memory_max_gb" value="{{ prefill.taskmanager_memory_max_gb }}">
-    <input type="hidden" name="taskmanager_cpu_max" value="{{ prefill.taskmanager_cpu_max }}">
-    {% else %}
-    <input type="hidden" name="taskmanager_memory_min_gb" value="2.0">
-    <input type="hidden" name="taskmanager_memory_max_gb" value="8.0">
-    <input type="hidden" name="taskmanager_cpu_max" value="8">
+    {% for key, val in prefill.items() %}
+    <input type="hidden" name="{{ key }}" value="{{ val if val is not none else '' }}">
+    {% endfor %}
     {% endif %}
 </form>
 {% endif %}

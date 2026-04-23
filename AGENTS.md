@@ -1,4 +1,4 @@
-# Cursor Rules for Flink Resource Estimator
+# Flink Resource Estimator
 
 ## Project Overview
 This is a FastAPI web application for estimating Apache Flink cluster resource requirements. It uses Pydantic models for data validation and provides both web UI and REST API interfaces.
@@ -73,18 +73,6 @@ docker build -t flink-estimator .
 docker run -d -p 8000:8000 --name flink-estimator flink-estimator
 ```
 
-### Kubernetes Commands
-```bash
-# Deploy to Kubernetes
-kubectl apply -f k8s/
-
-# Deploy with Kustomize
-kubectl apply -k k8s/
-
-# Port forward for local access
-kubectl port-forward service/flink-estimator-service 8000:80
-```
-
 ## UI/UX Guidelines
 - Use modern, responsive design with CSS Grid/Flexbox
 - Implement hover effects and smooth transitions
@@ -116,17 +104,13 @@ kubectl port-forward service/flink-estimator-service 8000:80
 - Save estimation files with timestamp and project name for easy identification
 
 ## Testing
+- separate unit tests (tests/ut) from integration tests (tests/it)
+- integration tests assumes the server is started and running
+- unit tests mocks backend response and focus on estimation and business logic
 - Test Pydantic model validation with both valid and invalid data
 - Verify API endpoints return expected data structures
-- Test file persistence and retrieval
 - Validate error handling paths
 - Ensure UI interactions work correctly
-
-## Performance Considerations
-- Use appropriate data types (int vs float) for calculations
-- Implement efficient file operations for persistence
-- Consider caching for frequently accessed data
-- Optimize CSS/JS loading for better UX
 
 ## Containerization & Deployment
 - Use multi-stage Docker builds for smaller images
