@@ -1,395 +1,169 @@
-# 🚀 Flink Resource Estimator
+# Flink Resource Estimator
 
-A web-based tool to estimate Apache Flink cluster resource requirements based on your workload characteristics. This FastAPI application provides a user-friendly interface to calculate memory, CPU, and cluster configuration recommendations for your Flink streaming jobs.
+Web app (FastAPI) that estimates Apache Flink cluster resource needs from workload inputs, node shape (bare metal or VM T‑shirt sizes), and SQL complexity. It offers a home dashboard, a tabbed estimation form, an in-app **Estimation Guide**, and JSON persistence for runs.
 
-## Features
-
-- **Interactive Web Interface**: Clean, modern UI for entering workload parameters
-- **Comprehensive Estimation**: Calculates memory, CPU, and cluster requirements
-- **RESTful API**: Programmatic access to estimation calculations
-- **Responsive Design**: Works on desktop and mobile devices
-- **Export Results**: Print or copy configuration for easy sharing
-- **Save & Manage Estimations**: Save estimations as JSON files with metadata
-- **Download & Preview**: View saved estimations and download them for record keeping
+**Interactive API reference:** with the app running, open [http://localhost:8000/docs](http://localhost:8000/docs) (the footer's “API Documentation” link goes here too). Request and response shapes are defined by `EstimationInput` and the estimation result models in [`src/flink_estimator/models.py`](src/flink_estimator/models.py).
 
 ![](./docs/images/home-page.png)
 
-## Quick Start
+## Features
 
-### Prerequisites
+- **Home** — three entry points: start an estimation, open saved files, or read the Estimation Guide
+- **Tabbed form** — *Project & Hardware* (network, workers, memory/CPU targets; VM S/M/L auto-fills cores and RAM), *Workload* (throughput, record size, latency, keys, skew, number of applications), *Flink SQL query complexity* (simple / medium / complex counts)
+- **Results** — summary and Flink-oriented recommendations; **Edit parameters and re-estimate** (reopens the form with the same values); **Save to JSON** and copy configuration snippets
+- **Saved list** — download, preview, delete, and reload a saved result page
+- **GET/JSON APIs** for estimate and save (see `/docs`)
 
-- Python 3.11 or higher
-- uv (Python package manager)
+## Quick start
 
-### Installation running with Python
+For development. See [Docker section](#docker) for user.
 
-1. **Navigate to the project directory:**
-   ```bash
-   cd flink-estimator/src
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   uv pip install -r requirements.txt
-   ```
-
-3. **Run the application:**
-   ```bash
-   uv run main.py
-   ```
-
-4. **Access the web interface:**
-   Open your browser and go to: [http://localhost:8000](http://localhost:8000)
-
-## Docker Deployment
-
-### Using Docker Compose (Recommended)
+**Requirements:** Python **3.11+** (see [`src/.python-version`](src/.python-version) and [`src/pyproject.toml`](src/pyproject.toml)). Use [`uv`](https://github.com/astral-sh/uv) to install and run.
 
 ```bash
-# Build and run the application
-docker-compose up --build
-
-# Run in background
-docker-compose up -d --build
-
-# Stop the application
-docker-compose down
-
-# View logs
-docker-compose logs -f
+cd src
+uv pip install -r requirements.txt
+uv run main.py
 ```
 
-### Using Docker Directly
+Open [http://localhost:8000](http://localhost:8000).
 
-Under src 
+For reload during development:
 
 ```bash
-# Build the im
-
-# Run the container
-docker run -d \
-  --name flink-estimator \
-  -p 8000:8000 \
-  -v flink_estimations:/app/saved_estimations \
-  jbcodeforce/flink-estimator:latest
-
-# View logs
-docker logs -f flink-estimator
-
-# Stop and remove
-docker stop flink-estimator && docker rm flink-estimator
-```
-
-## Kubernetes Deployment
-
-### Prerequisites
-- Kubernetes cluster (local or cloud)
-- kubectl configured
-- Optional: kustomize for advanced deployments
-
-### Quick Deployment
-
-```bash
-# Apply all manifests
-kubectl apply -k k8s/
-
-# Check deployment status
-kubectl get pods -l app=flink-estimator
-
-# Get service information
-kubectl get services
-
-# Access via NodePort (if using NodePort service)
-# Application will be available at: http://<node-ip>:30800
-```
-
-* Delete deployment
-  ```bash
-  kubectl delete -k k8s/
-  ```
-
-### Accessing the Application
-
-1. **NodePort Service**: http://\<node-ip\>:30800
-2. **Port Forward**: `kubectl port-forward service/flink-estimator-service 8000:80`
-3. **Ingress**: Configure ingress controller for production access
-
-## Usage
-
-### Web Interface
-
-1. **Project Information:**
-   - Enter your project name for identification
-
-2. **Workload Characteristics:**
-   - **Messages per Second**: Expected throughput (e.g., 10,000)
-   - **Average Record Size**: Size of each message in bytes (e.g., 1024)
-
-3. **Flink Statement Complexity:**
-   - **Simple**: Basic SELECT, WHERE clauses, projections
-   - **Medium**: JOINs, GROUP BY, basic window operations
-   - **Complex**: Complex windows, CEP patterns, UDFs, nested queries
-
-4. **Submit** and get comprehensive resource recommendations
-
-### API Access
-
-You can also access the estimation programmatically:
-
-```bash
-curl "http://localhost:8000/api/estimate?project_name=MyProject&messages_per_second=10000&avg_record_size_bytes=1024&simple_statements=5&medium_statements=2&complex_statements=1"
-```
-
-**Or using JSON POST:**
-
-```bash
-curl -X POST "http://localhost:8000/api/estimate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_name": "MyProject",
-    "messages_per_second": 10000,
-    "avg_record_size_bytes": 1024,
-    "simple_statements": 5,
-    "medium_statements": 2,
-    "complex_statements": 1
-  }'
-```
-
-## Pydantic Data Models
-
-The application uses Pydantic for robust data validation and automatic API documentation. All inputs and outputs are strongly typed with comprehensive validation.
-
-### EstimationInput Model
-
-```python
-class EstimationInput(BaseModel):
-    project_name: str              # 1-100 characters, non-empty
-    messages_per_second: int       # Positive integer
-    avg_record_size_bytes: int     # Positive integer
-    simple_statements: int = 0     # Non-negative integer
-    medium_statements: int = 0     # Non-negative integer  
-    complex_statements: int = 0    # Non-negative integer
-```
-
-### EstimationResult Model
-
-The response includes nested Pydantic models for:
-- **InputSummary**: Validated input parameters with calculated throughput
-- **ResourceEstimates**: Memory, CPU, and processing load calculations
-- **ClusterRecommendations**: JobManager and TaskManager specifications
-- **ScalingRecommendations**: Parallelism and checkpointing settings
-
-### Benefits of Pydantic Integration
-
-- **Automatic Validation**: Input parameters are validated with clear error messages
-- **Type Safety**: All data structures are strongly typed
-- **API Documentation**: FastAPI automatically generates OpenAPI/Swagger docs
-- **JSON Serialization**: Consistent JSON output with proper data types
-- **IDE Support**: Full autocomplete and type checking in development
-
-Visit `/docs` when the server is running to see the interactive API documentation.
-
-## Estimation Model
-
-The tool uses a simplified model that considers:
-
-### Resource Calculations
-
-- **Memory Estimation**: Base memory per statement + throughput buffer + complexity overhead
-- **CPU Estimation**: Base cores + throughput factor + complexity processing
-- **Cluster Sizing**: Optimal JobManager and TaskManager configurations
-
-### Complexity Multipliers
-
-- **Simple Statements**: 1.2x processing overhead
-- **Medium Statements**: 2.0x processing overhead  
-- **Complex Statements**: 3.5x processing overhead
-
-### Recommendations Include
-
-- **Total Resource Requirements**: Memory and CPU totals
-- **Cluster Configuration**: JobManager and TaskManager specs
-- **Scaling Parameters**: Parallelism and checkpointing settings
-- **Sample Configuration**: Ready-to-use `flink-conf.yaml` snippet
-
-## Example Output
-
-```yaml
-# JobManager
-jobmanager.memory.process.size: 2048m
-
-# TaskManager  
-taskmanager.memory.process.size: 4096m
-taskmanager.numberOfTaskSlots: 4
-
-# Checkpointing
-execution.checkpointing.interval: 15000ms
-execution.checkpointing.mode: EXACTLY_ONCE
-
-# Parallelism
-parallelism.default: 8
-```
-
-## Persistence & File Management
-
-### Saving Estimations
-
-After generating an estimation, you can save it as a JSON file by clicking the "💾 Save to JSON" button on the results page. Each saved file includes:
-
-- **Metadata**: Unique ID, timestamp, project name
-- **Input Parameters**: All the parameters you entered
-- **Estimation Results**: Complete calculation results
-- **Version Information**: For future compatibility
-
-### JSON File Format
-
-```json
-{
-  "metadata": {
-    "estimation_id": "a1b2c3d4",
-    "timestamp": "2024-01-15T10:30:00.000Z",
-    "project_name": "My Streaming Project",
-    "saved_at": "2024-01-15 10:30:00"
-  },
-  "input_parameters": {
-    "messages_per_second": 10000,
-    "avg_record_size_bytes": 1024,
-    "simple_statements": 5,
-    "medium_statements": 2,
-    "complex_statements": 1
-  },
-  "estimation_results": {
-    // Complete estimation results...
-  },
-  "version": "1.0"
-}
-```
-
-### Managing Saved Files
-
-- **View All**: Navigate to `/saved` to see all saved estimations
-- **Download**: Click download button to get the JSON file
-- **Preview**: View file contents in a new window
-- **Auto-naming**: Files are automatically named with project, timestamp, and ID
-
-Files are saved in the `saved_estimations/` directory with names like:
-`My_Project_20240115_103000_a1b2c3d4.json`
-
-## Project Structure
-
-```
-flink-estimator/src
-├── main.py              # FastAPI application with Pydantic models
-├── templates/           # Jinja2 HTML templates
-│   ├── index.html       # Main form page
-│   ├── results.html     # Results display page
-│   └── saved.html       # Saved estimations management page
-├── static/              # Static assets
-│   └── style.css        # Application styling
-├── k8s/                 # Kubernetes manifests
-│   ├── deployment.yaml  # Kubernetes deployment
-│   ├── service.yaml     # Kubernetes services
-│   ├── pvc.yaml         # Persistent volume claim
-│   └── kustomization.yaml # Kustomize configuration
-├── saved_estimations/   # Directory for saved JSON files (auto-created)
-├── requirements.txt     # Python dependencies (includes Pydantic)
-├── Dockerfile           # Docker container definition
-├── docker-compose.yml   # Docker Compose configuration
-├── .dockerignore        # Docker build context exclusions
-├── .cursorrules         # Cursor IDE rules for this project
-├── .python-version      # Python version specification for uv
-└── README.md           # This file
-```
-
-## API Reference
-
-### Web Endpoints
-
-- **GET /**: Main estimation form
-- **POST /estimate**: Process estimation request (form data)
-- **GET /saved**: View saved estimations page
-
-### REST API
-
-- **GET /api/estimate**: Get estimation results (query parameters)
-- **POST /api/estimate**: Get estimation results (JSON body with Pydantic model)
-- **POST /save-estimation**: Save estimation to JSON file (form data)
-- **POST /api/save-estimation**: Save estimation to JSON file (JSON body)
-- **GET /download/{filename}**: Download saved estimation file
-- **GET /saved-estimations**: List all saved estimation files
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| project_name | str | Yes | Name of the project (1-100 characters) |
-| messages_per_second | int | Yes | Expected message throughput (positive) |
-| avg_record_size_bytes | int | Yes | Average message size in bytes (positive) |
-| simple_statements | int | No | Number of simple SQL statements (≥0) |
-| medium_statements | int | No | Number of medium complexity statements (≥0) |
-| complex_statements | int | No | Number of complex statements (≥0) |
-
-## Development
-
-### Running in Development Mode
-
-```bash
+cd src
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Testing the Application
+## Using the web UI
 
-Run the included test script to validate Pydantic models and core functionality:
+- **Home (`/`)** — same actions as the three cards: new estimation, saved files, and **Estimation Guide** (`/considerations`), which explains assumptions, baseline rules, and a TaskManager memory map
+- **Configure (`/estimation-form`)** — use the three tabs, then **Calculate Resource Estimates**; you can use **Save Configuration** on the form to persist inputs (via `/save-estimation`) before or alongside a full run
+- **Results (`POST /estimate`)** — use **Edit parameters and re-estimate** to return to the form with current values; **Save to JSON** stores the full input + result under `saved_estimations/` (relative to the process working directory, typically `src/saved_estimations` when you start the app from `src/`)
+- **Saved (`/saved`)** — manage files; open a file’s result view via **Reload** (see `GET /reload/{filename}` below)
+
+## API overview
+
+- **POST `/api/estimate`** — JSON body: `EstimationInput` (all fields; VM workers require `worker_node_t_size` `S` / `M` / `L`)
+- **GET `/api/estimate`** — same parameters as query strings (e.g. for quick checks with `curl`)
+- **POST `/api/save-estimation`** or **POST `/save-estimation`** — run an estimate and save JSON
+- **GET `/saved-estimations`** — list saved files and metadata
+- **GET `/download/{filename}`** — download a saved JSON
+- **DELETE `/delete-estimation/{filename}`** — remove a saved file
+
+Example **POST** (bare-metal workers; extend or adjust fields to match your scenario):
 
 ```bash
-uv run pytest tests/
+curl -s -X POST "http://localhost:8000/api/estimate" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_name": "Demo",
+    "messages_per_second": 10000,
+    "avg_record_size_bytes": 1024,
+    "number_flink_applications": 1,
+    "num_distinct_keys": 100000,
+    "data_skew_risk": "low",
+    "bandwidth_capacity_gbps": 10,
+    "expected_latency_seconds": 5.0,
+    "simple_statements": 2,
+    "medium_statements": 1,
+    "complex_statements": 1,
+    "nb_worker_nodes": 3,
+    "worker_node_type": "bare_metal",
+    "worker_node_memory_mb": 16384,
+    "worker_node_cpu_max": 8
+  }'
 ```
 
-This will test:
-- Pydantic model creation and validation
-- Estimation calculations  
-- JSON serialization and file saving
-- Input validation with error handling
+For a full list of fields, defaults, and validation rules, use `/docs` or the Pydantic models in code.
 
-### Adding New Features
+## HTML routes
 
-The application is structured to easily add new estimation models:
+| Method | Path | Purpose |
+|--------|------|--------|
+| GET | `/` | Home / dashboard |
+| GET | `/estimation-form` | Tabbed form (query string can prefill fields) |
+| GET | `/considerations` | Estimation Guide |
+| GET | `/saved` | Saved files UI |
+| POST | `/estimate` | Submit form → results page |
+| GET | `/reload/{filename}` | Open a saved estimation as the results view |
 
-1. **Update the `calculate_flink_estimation()` function** in `main.py`
-2. **Modify templates** in `templates/` for UI changes
-3. **Add styling** in `static/style.css`
+## How the estimate is produced (brief)
 
-## Important Notes
- 
-**Disclaimer**: This tool provides estimated values based on simplified models. Actual resource requirements may vary significantly based on:
+The engine combines throughput, record size, statement counts (scaled by the number of Flink applications), network ceiling, latency, key cardinality and skew, and worker shape to derive memory, CPU, node counts, and example Flink config lines. The in-app **Estimation Guide** lists assumptions (e.g. baselines, checkpointing) that matter more than a short README can cover.
 
-- Specific use case patterns
-- Data distribution and skew
-- Flink job implementation details
-- Network and I/O characteristics
-- State management requirements
+## Docker
 
-**Always perform thorough testing and monitoring in your specific environment.**
+The [`Dockerfile`](src/Dockerfile) and [`src/requirements.txt`](src/requirements.txt) are under **`src/`**. Build with that directory as the context:
 
-## Contributing
+```bash
+docker build -t flink-estimator -f src/Dockerfile src
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+Run and persist estimations to a host directory (example uses a folder at the repo root):
+
+```bash
+docker run -d --name flink-estimator -p 8000:8000 \
+  -v "$(pwd)/saved_estimations:/app/saved_estimations" \
+  flink-estimator
+```
+
+There is a [`docker-compose.yml`](docker-compose.yml) at the **repository root**; adjust the compose `build` context if you point it at a layout where the `Dockerfile` is not visible.
+
+## Kubernetes
+
+From the **repository root** (where [`k8s/`](k8s/) lives):
+
+```bash
+kubectl apply -k k8s/
+kubectl get pods -l app=flink-estimator
+```
+
+Tear down: `kubectl delete -k k8s/`. Access patterns (NodePort, `kubectl port-forward`, etc.) follow your cluster’s `Service` and networking setup.
+
+## Project layout
+
+```text
+flink-estimator/
+├── README.md
+├── docker-compose.yml
+├── k8s/                    # Kustomize manifests
+├── docs/images/            # e.g. screenshot above
+├── saved_estimations/        # often used for Docker / host mount (optional for local dev)
+└── src/
+    ├── main.py
+    ├── requirements.txt
+    ├── flink_estimator/      # models and estimation logic
+    ├── templates/            # home, estimation, results, saved, considerations, base
+    ├── static/
+    ├── tests/                 # unit tests (pytest; see src/pytest.ini)
+    ├── saved_estimations/   # default save dir when cwd is `src/`
+    └── .python-version
+```
+
+## Development and tests
+
+```bash
+cd src
+uv run pytest
+```
+
+`pytest.ini` sets `testpaths = tests` relative to the `src/` working directory (see [`src/pytest.ini`](src/pytest.ini)). Integration tests that assume a running server live under the same tree per project convention.
+
+## Disclaimer
+
+Estimates use simplified models. Real clusters depend on your job graph, I/O, state, skew, and operators—validate with your own load tests and monitoring.
 
 ## License
 
-This project is part of the flink-studies repository. Please refer to the main repository license.
+This project is licensed under the [Apache License 2.0](LICENSE).
+
+## Contributing
+
+Open issues and pull requests on the repository. Keep changes focused and covered by tests where it makes sense.
 
 ## Support
 
-For issues or questions:
-1. Check the main flink-studies documentation
-2. Review Flink official documentation
-3. Create an issue in the repository
+Use the repository issue tracker, [Apache Flink documentation](https://flink.apache.org), and the interactive help at `http://localhost:8000/docs` when the app is running.
 
----
-
-**Happy Flink Streaming!** 
+## See [related Flink studies book](https://jbcodeforce.github.io/flink-studies/)

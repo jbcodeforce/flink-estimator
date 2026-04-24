@@ -77,7 +77,7 @@ class EstimationInput(BaseModel):
 
     @property
     def total_statements(self) -> int:
-        return self.simple_statements + self.medium_statements + self.complex_statements
+        return (self.simple_statements + self.medium_statements + self.complex_statements) * self.number_flink_applications
 
     @property
     def total_throughput_mb_per_sec(self) -> float:

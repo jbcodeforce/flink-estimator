@@ -447,12 +447,13 @@ class TestBasicEstimation:
             messages_per_second=50000,
             avg_record_size_bytes=2048,
             worker_node_memory_mb=65536,
-            num_distinct_keys=10000000,
+            num_distinct_keys=10_000_000,
             data_skew_risk="low",
             worker_node_cpu_max=8,
-            simple_statements=50,
-            medium_statements=30,
-            complex_statements=20
+            simple_statements=5,
+            medium_statements=3,
+            complex_statements=2,
+            number_flink_applications=10
         )
         input_params = _defaulting_input_params(input_params)
         result = calculate_flink_estimation(input_params)
