@@ -17,7 +17,10 @@ from flink_estimator.estimation import(
      _assess_free_mem_per_node,
      _greedy_pack_taskmanagers,
      _assess_taskmanager_based_on_throughput,
-     _latency_cpu_factor,
+     _latency_cpu_factor,   
+     _managed_memory_percent_by_latency,
+     _state_flink_process_memory_mb,    
+     _network_buffer_min_process_memory_mb,
      TM_MEM_MB,
      )
 import os
@@ -120,6 +123,46 @@ class TestPrivateHelpers:
         assert free_mem_per_node == [13824]
         assert total_free_mem >= 13824
 
+    def test_managed_memory_percent_by_latency(self):
+        """_managed_memory_percent_by_latency: 0.5s latency gets 0.32, 1.0s latency gets 0.35, 5.0s latency gets 0.38, 10.0s latency gets 0.4."""
+        assert _managed_memory_percent_by_latency(0.5) == 0.32
+        assert _managed_memory_percent_by_latency(1.0) == 0.35
+        assert _managed_memory_percent_by_latency(5.0) == 0.4
+        assert _managed_memory_percent_by_latency(10.0) == 0.4
+
+    def test_state_flink_process_memory_mb(self):
+        """_state_flink_process_memory_mb: 1 million keys, 1 medium statement, 1 complex statement, 1 flink application, 512 bytes record, 0.5s latency."""
+        input_params = EstimationInput(
+            project_name="State Flink Process Memory MB Test",
+            num_distinct_keys=1_000_000,
+            avg_record_size_bytes=512,
+            medium_statements=1,
+            complex_statements=1,
+            number_flink_applications=1,
+            expected_latency_seconds=5.0,
+        )
+        total_managed_memory_mb = _state_flink_process_memory_mb(input_params)
+        print(f"total_managed_memory_mb: {total_managed_memory_mb}")
+        assert total_managed_memory_mb >= 2048
+
+    def test_network_buffer_min_process_memory_mb(self):
+        """_network_buffer_min_process_memory_mb: 1 million keys, 1 medium statement, 1 complex statement, 1 flink application, 512 bytes record, 0.5s latency."""
+        input_params = EstimationInput(
+            project_name="Network Buffer Min Process Memory MB Test",
+            num_distinct_keys=1_000_000,
+            avg_record_size_bytes=512,
+            medium_statements=1,
+            complex_statements=1,
+            simple_statements=1,
+            number_flink_applications=1,
+            expected_latency_seconds=0.5,
+            messages_per_second=1000,
+        )
+        tmbps = input_params.total_throughput_mb_per_sec
+        total_network_buffer_min_process_memory_mb = _network_buffer_min_process_memory_mb(input_params, tmbps, 1)
+        print(f"total_network_buffer_min_process_memory_mb: {total_network_buffer_min_process_memory_mb}")
+        assert total_network_buffer_min_process_memory_mb >= 200 #MB
+
     def test_nb_taskmanagers_from_state_size_small_vm(self, vm_s_estimation_input):
         """_assess_taskmanager_based_on_state: at least one TM; larger state (more keys/bytes) increases TM count and node split."""
         # Small VM with small state too.
@@ -134,7 +177,9 @@ class TestPrivateHelpers:
             }
         )
         jm_memory = 2048
-        total_memory_mb, nb_taskmanagers, node_allocations = _assess_taskmanager_based_on_state(input_params, jm_memory)
+        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
+            input_params, jm_memory
+        )
         print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
         assert nb_taskmanagers == 1
         assert node_allocations == [1]
@@ -143,7 +188,9 @@ class TestPrivateHelpers:
         print("\n --- increase the state size to 20 million keys at 1k value size to have more TM\n")
         input_params.num_distinct_keys=20_000_000 # 20 million keys
         input_params.avg_record_size_bytes=1024
-        total_memory_mb, nb_taskmanagers, node_allocations = _assess_taskmanager_based_on_state(input_params, jm_memory)
+        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
+            input_params, jm_memory
+        )
         print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
         assert nb_taskmanagers == 12
         assert node_allocations == [3,3,3,3]
@@ -168,7 +215,9 @@ class TestPrivateHelpers:
             expected_latency_seconds=5.0,
         )
         jm_memory = 4096
-        total_memory_mb, nb_taskmanagers, node_allocations = _assess_taskmanager_based_on_state(input_params, jm_memory)
+        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
+            input_params, jm_memory
+        )
         print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
         # Large state + 4 medium + 1 complex yields 60 TMs; placement may be [18,21,21] or [20,20,20]
         assert nb_taskmanagers == 60
@@ -234,6 +283,7 @@ class TestPrivateHelpers:
         assert nb_taskmanagers == 2
 
 
+
 class TestBasicEstimation:
     """End-to-end calculate_flink_estimation: VM-integrated and custom worker shapes (memory/CPU) as noted per test."""
 
@@ -284,13 +334,13 @@ class TestBasicEstimation:
         assert result.cluster_recommendations.jobmanager.total_cpus == 1
 
     def test_simple_workload(self):
-        """VM L: 5000 msg/s at 512 bytes, 1 simple + 2 medium + 2 complex (5 statements), 1.0s latency (parallelism cap)."""
-        # VM L has enough per-node memory to place many 4096 MB TMs when state requires it
+        """VM S, 10k msg/s, 1+1+1 statements, 10M keys: state and CPU both drive 12+ TMs (matches medium-work scale)."""
+        # VM S: place many 4096 MB TMs across workers when state requires it
         input_params = EstimationInput(
             project_name="Simple_Workload Test",
             messages_per_second=10000,
             avg_record_size_bytes=1024,
-            num_distinct_keys=100_000, # 
+            num_distinct_keys=10_000_000,
             data_skew_risk="low",
             bandwidth_capacity_gbps= 10,  # very high Gbps value (estimator field; not the limiter here)
             expected_latency_seconds=5.0,

@@ -165,6 +165,64 @@ class TestTaskManagerCountCpuConstraint:
         assert tm.total_cpus >= 1
 
 
+class TestLatencyBufferMemory:
+    """Tight expected_latency increases TM process memory (network / in-flight buffer heuristic)."""
+
+    def test_tight_latency_increases_memory_vs_relaxed(self):
+        """Same workload: 0.5s expected latency should not yield less TaskManager memory than 10.0s (buffer headroom)."""
+        base = dict(
+            project_name="Latency A/B",
+            messages_per_second=200_000,
+            avg_record_size_bytes=1024,
+            num_distinct_keys=5_000,
+            data_skew_risk="low",
+            bandwidth_capacity_gbps=100,
+            simple_statements=1,
+            medium_statements=0,
+            complex_statements=0,
+            worker_node_memory_mb=65536,
+            worker_node_cpu_max=32,
+        )
+        tight = calculate_flink_estimation(
+            EstimationInput(**base, expected_latency_seconds=0.5)
+        )
+        relaxed = calculate_flink_estimation(
+            EstimationInput(**base, expected_latency_seconds=10.0)
+        )
+        assert (
+            tight.cluster_recommendations.taskmanagers.total_memory_mb
+            >= relaxed.cluster_recommendations.taskmanagers.total_memory_mb
+        )
+        assert (
+            tight.cluster_recommendations.taskmanagers.memory_mb_each
+            >= relaxed.cluster_recommendations.taskmanagers.memory_mb_each
+        )
+
+    def test_cpu_dominant_low_latency_tm_memory_not_trivial_4g_only(self):
+        """High per-TM throughput and 0.5s latency: buffer heuristic can exceed 4096 MB per TaskManager."""
+        mps = 2_000_000
+        record_bytes = 2048
+        input_params = EstimationInput(
+            project_name="Buffer vs 4G floor",
+            messages_per_second=mps,
+            avg_record_size_bytes=record_bytes,
+            num_distinct_keys=100,
+            data_skew_risk="low",
+            bandwidth_capacity_gbps=1000,
+            expected_latency_seconds=0.5,
+            simple_statements=1,
+            medium_statements=0,
+            complex_statements=0,
+            worker_node_memory_mb=256 * 1024,
+            worker_node_cpu_max=64,
+        )
+        r = calculate_flink_estimation(input_params)
+        tm = r.cluster_recommendations.taskmanagers
+        assert tm.count >= 1
+        assert tm.memory_mb_each > 4096.0
+        assert tm.total_memory_mb >= tm.count * 4096
+
+
 class TestEdgeCases:
     """Zero statements, huge records, and tiny records at 1M msg/s."""
 
