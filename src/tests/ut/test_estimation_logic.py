@@ -1,8 +1,11 @@
 """
-Unit tests for Flink resource estimation logic.
+Unit tests: public `calculate_flink_estimation` API and EstimationInput validation (no private _helpers).
 
-This module tests the calculate_flink_estimation function with various
-scenarios including different workload sizes, complexity levels, and edge cases.
+Covers: statement mix and complexity; throughput tiers on bare_metal; TM/CPU invariants; edge message
+shapes; scaling (parallelism, checkpoint); Pydantic errors; repeatability; skew and bandwidth
+(summary + scaling; current engine does not fold skew/bandwidth into total_cpus); nb_worker_nodes on summary vs total_worker_node_needed.
+
+Uses bare_metal / VM only where noted. Pairs with test_basic_estimation (internal helpers, VM T-shirt E2E).
 """
 
 import pytest
@@ -12,52 +15,48 @@ from flink_estimator.estimation import calculate_flink_estimation
 
 
 class TestComplexityScenarios:
-    """Test different statement complexity combinations."""
-    
-   
-        
+    """Complexity-only and mixed op counts; processing_load_score is currently fixed at 1.0 in the engine."""
+
     def test_complex_statements_only(self):
-        """Test workload with only complex statements."""
+        """Five complex ops: 1.0s vs 10.0s latency — only <=1.0s gets the parallelism boost (default model latency is 5.0s, so set explicitly). Checkpoint 9000 ms for this branch."""
         input_params = EstimationInput(
             project_name="Complex Only",
-            messages_per_second=1000,
+            messages_per_second=10000,
             avg_record_size_bytes=1024,
+            expected_latency_seconds=1.0,
             simple_statements=0,
             medium_statements=0,
             complex_statements=5
         )
         
         result = calculate_flink_estimation(input_params)
+        print(result.model_dump_json(indent=2))        
+        assert result.resource_estimates.total_cpus >= 25
         
-        assert result.resource_estimates.processing_load_score == pytest.approx(1.0)
-        
-        assert result.resource_estimates.total_cpus >= 4
-        
-        # With default 1.0s latency, checkpoint interval is capped at 10s
-        # For relaxed latency, test longer checkpointing intervals
         relaxed_input = EstimationInput(
             project_name="Complex Only Relaxed",
-            messages_per_second=1000,
+            messages_per_second=10000,
             avg_record_size_bytes=1024,
-            expected_latency_seconds=10.0,  # Relaxed latency
+            expected_latency_seconds=10.0,
             simple_statements=0,
             medium_statements=0,
             complex_statements=5
         )
         relaxed_result = calculate_flink_estimation(relaxed_input)
-        # Base checkpoint interval can match when both land on the same cap; relaxed latency boosts parallelism.
+        print(relaxed_result.model_dump_json(indent=2))
+        # 1.0s expected_latency applies a parallelism multiplier vs 10.0s (see _compute_scaling_recommendations)
         assert result.scaling_recommendations.recommended_parallelism > relaxed_result.scaling_recommendations.recommended_parallelism
         assert result.scaling_recommendations.checkpointing_interval_ms == pytest.approx(9000, rel=0.01)
         
     def test_mixed_complexity(self):
-        """Test workload with mixed statement complexities."""
+        """4 simple + 3 medium + 2 complex; throughput/CPU path (not a weighted 0.25/1.0/1.2 load score in API)."""
         input_params = EstimationInput(
             project_name="Mixed Complexity",
             messages_per_second=2000,
             avg_record_size_bytes=1024,
-            simple_statements=4,     # 4 * 0.25 = 1
-            medium_statements=3,     # 3 * 1.0 = 3.0
-            complex_statements=2     # 2 * COMPLEX_MULTIPLIER 1.2
+            simple_statements=4,
+            medium_statements=3,
+            complex_statements=2,
         )
        
         result = calculate_flink_estimation(input_params)
@@ -68,11 +67,11 @@ class TestComplexityScenarios:
         assert result.cluster_recommendations.taskmanagers.count >= 1
 
 
-class TestThroughputScaling:
-    """Test how estimation scales with different throughput levels."""
+class TestThroughputScalingDefaultProfile:
+    """Throughput tiers with default (bare_metal) worker memory/CPU — not VM T-shirt E2E."""
     
     def test_low_throughput(self):
-        """Test low throughput scenario."""
+        """500 msg/s, 128-byte records; throughput MB/s and coarse CPU upper bound (default low skew, bare_metal)."""
         input_params = EstimationInput(
             project_name="Low Throughput",
             messages_per_second=500,
@@ -88,11 +87,10 @@ class TestThroughputScaling:
         expected_throughput = (500 * 128) / (1024 * 1024)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-1)
         
-        # Medium default skew (1.2) scales CPU in the estimate
         assert result.resource_estimates.total_cpus <= 40
-        
+
     def test_medium_throughput(self):
-        """Test medium throughput scenario."""
+        """~9.77 MB/s; total_cpus in a mid band (estimator does not apply skew to resource_estimates.total_cpus)."""
         input_params = EstimationInput(
             project_name="Medium Throughput",
             messages_per_second=10000,
@@ -108,12 +106,11 @@ class TestThroughputScaling:
         expected_throughput = (10000 * 1024) / (1024 * 1024)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-2)
         
-        # Should scale resources accordingly (now includes skew factor)
         assert result.resource_estimates.total_cpus > 4
         assert result.resource_estimates.total_cpus <= 35
-        
+
     def test_high_throughput(self):
-        """Test high throughput scenario."""
+        """~195 MB/s; many CPUs; at least one TM for placement."""
         input_params = EstimationInput(
             project_name="High Throughput",
             messages_per_second=100000,
@@ -135,15 +132,11 @@ class TestThroughputScaling:
 
 
 class TestTaskManagerCountCpuConstraint:
-    """Regression for jbcodeforce/flink-estimator#1: TM count must respect CPU, not memory alone."""
+    """Extreme throughput with one stateless op: TM aggregate CPUs stay at or below resource_estimates.total_cpus."""
 
     def test_cluster_taskmanager_cpu_covers_workload_estimate(self):
-        """
-        With no SQL statements, memory stays moderate while throughput drives CPU.
-        Memory-only TM sizing can yield one TM whose aggregate cores are below
-        resource_estimates.total_cpus; cluster TM total CPU must cover the estimate.
-        """
-        # ~512 MB/s: 524288 * 1024 / (1024*1024) == 512
+        """~512 MB/s, one simple op, 10M keys, low skew: TM total_cpus is capped by cluster math vs. resource line."""
+        # 524288 * 1024 B/s / (1024*1024) = 512 MB/s
         mps = 524288
         record_bytes = 1024
         input_params = EstimationInput(
@@ -173,10 +166,10 @@ class TestTaskManagerCountCpuConstraint:
 
 
 class TestEdgeCases:
-    """Test edge cases and boundary conditions."""
-    
+    """Zero statements, huge records, and tiny records at 1M msg/s."""
+
     def test_no_statements(self):
-        """Test estimation with no processing statements."""
+        """0+0+0 statements: still at least one TM; processing_load_score placeholder stays 1.0."""
         input_params = EstimationInput(
             project_name="No Statements",
             messages_per_second=1000,
@@ -188,16 +181,14 @@ class TestEdgeCases:
         
         result = calculate_flink_estimation(input_params)
         
-        # No statements means no processing load
         assert result.input_summary.total_statements == 0
         assert result.resource_estimates.processing_load_score == pytest.approx(1.0)
         
-        # Still needs base resources for I/O
         assert result.resource_estimates.total_cpus >= 1
         assert result.cluster_recommendations.taskmanagers.count >= 1
         
     def test_single_large_message(self):
-        """Test with low frequency but very large messages."""
+        """10 msg/s, 10 MiB per record: ~100 MB/s; total_memory_mb is material."""
         input_params = EstimationInput(
             project_name="Large Messages",
             messages_per_second=10,
@@ -213,11 +204,10 @@ class TestEdgeCases:
         expected_throughput = 10 * 10
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-1)
         
-        # Large messages require memory for buffering
         assert result.resource_estimates.total_memory_mb > 500
         
     def test_many_small_messages(self):
-        """Test with high frequency but very small messages."""
+        """1e6 msg/s, 10-byte records: ~9.54 MB/s; still needs CPU for the one simple op path."""
         input_params = EstimationInput(
             project_name="Small Messages",
             messages_per_second=1000000,  # 1M messages/s
@@ -233,15 +223,14 @@ class TestEdgeCases:
         expected_throughput = (1000000 * 10) / (1024 * 1024)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-1)
         
-        # High message rate requires CPU for processing overhead
         assert result.resource_estimates.total_cpus >= 4
 
 
 class TestResourceConstraints:
-    """Test resource allocation constraints and limits."""
-    
+    """Sanity bounds on TM per-process memory (MB) and non-zero TM/JM CPUs."""
+
     def test_taskmanager_memory_limits(self):
-        """Test TaskManager memory allocation stays within bounds."""
+        """memory_mb_each is in MB (typical 4096 per TM when uniform); assert positive and not above raw worker cap + 1 (loose bound)."""
         input_params = EstimationInput(
             project_name="Memory Limits",
             messages_per_second=50000,
@@ -252,14 +241,13 @@ class TestResourceConstraints:
         )
         
         result = calculate_flink_estimation(input_params)
-        
-        # TaskManager memory (GB per TM) matches target worker_node_memory_gb default (2)
-        tm_gb = result.cluster_recommendations.taskmanagers.memory_gb_each
-        assert tm_gb >= 2
-        assert tm_gb <= input_params.worker_node_memory_mb + 1
+
+        tm_per = result.cluster_recommendations.taskmanagers.memory_mb_each
+        assert tm_per >= 2
+        assert tm_per <= input_params.worker_node_memory_mb + 1
 
     def test_taskmanager_cpu_limits(self):
-        """Aggregate TM CPU stays within workload-derived bounds."""
+        """Heavy mixed workload: at least one TM core in the cluster line."""
         input_params = EstimationInput(
             project_name="CPU Limits",
             messages_per_second=100000,
@@ -274,7 +262,7 @@ class TestResourceConstraints:
         assert tm.total_cpus >= 1
 
     def test_jobmanager_constraints(self):
-        """Test JobManager has fixed resource allocation."""
+        """Non-trivial job: JM has at least 0.5 CPU (units) and >= 1024 MB memory."""
         input_params = EstimationInput(
             project_name="JobManager Test",
             messages_per_second=75000,
@@ -287,20 +275,20 @@ class TestResourceConstraints:
         result = calculate_flink_estimation(input_params)
         
         jm = result.cluster_recommendations.jobmanager
-        assert jm.cpu_cores >= 0.5
+        assert jm.total_cpus >= 0.5
         assert jm.memory_mb >= 1024
 
 
 class TestScalingRecommendations:
-    """Test parallelism and scaling recommendations."""
-    
+    """Invariants on scaling_recommendations (min ≤ recommended ≤ max; checkpoint range across complexity)."""
+
     def test_parallelism_scaling(self):
-        """Test parallelism recommendations scale with CPU."""
+        """10.0s latency avoids the <=1.0s boost; ordering of min/recommended/max holds."""
         input_params = EstimationInput(
             project_name="Parallelism Test",
             messages_per_second=20000,
             avg_record_size_bytes=1024,
-            expected_latency_seconds=10.0,  # Use relaxed latency to avoid parallelism boost
+            expected_latency_seconds=10.0,
             simple_statements=4,
             medium_statements=2,
             complex_statements=1
@@ -314,13 +302,12 @@ class TestScalingRecommendations:
         assert scaling.recommended_parallelism <= scaling.max_parallelism
         
     def test_checkpointing_interval(self):
-        """Test checkpointing interval scales with processing complexity."""
-        # Simple workload with relaxed latency
+        """10s latency, default low skew: 2 simple vs 5 complex; checkpoint (ms) for complex >= simple, both in [5000, 60000] (may be equal if same skew branch)."""
         simple_input = EstimationInput(
             project_name="Simple Checkpointing",
             messages_per_second=1000,
             avg_record_size_bytes=512,
-            expected_latency_seconds=10.0,  # Relaxed latency to see complexity differences
+            expected_latency_seconds=10.0,
             simple_statements=2,
             medium_statements=0,
             complex_statements=0
@@ -328,12 +315,11 @@ class TestScalingRecommendations:
         
         simple_result = calculate_flink_estimation(simple_input)
         
-        # Complex workload with relaxed latency
         complex_input = EstimationInput(
             project_name="Complex Checkpointing",
             messages_per_second=1000,
             avg_record_size_bytes=512,
-            expected_latency_seconds=10.0,  # Relaxed latency to see complexity differences
+            expected_latency_seconds=10.0,
             simple_statements=0,
             medium_statements=0,
             complex_statements=5
@@ -344,17 +330,16 @@ class TestScalingRecommendations:
         assert complex_result.scaling_recommendations.checkpointing_interval_ms >= \
                simple_result.scaling_recommendations.checkpointing_interval_ms
 
-        # Both should be within reasonable bounds
         assert simple_result.scaling_recommendations.checkpointing_interval_ms >= 5000
         assert complex_result.scaling_recommendations.checkpointing_interval_ms <= 60000
 
 
 class TestInputValidation:
-    """Test input validation and error handling."""
-    
+    """Pydantic ValidationError on bad fields; VM model_validator; VM S overwrites memory/CPU."""
+
     def test_invalid_project_name(self):
-        """Test validation of project name field."""
-        with pytest.raises(ValueError, match="Project name cannot be empty"):
+        """Whitespace-only project_name fails field validator."""
+        with pytest.raises(ValidationError, match="Project name cannot be empty"):
             EstimationInput(
                 project_name="   ",  # Only whitespace
                 messages_per_second=1000,
@@ -363,8 +348,8 @@ class TestInputValidation:
             )
             
     def test_zero_messages_per_second(self):
-        """Test validation of messages per second."""
-        with pytest.raises(ValueError):
+        """messages_per_second must be > 0."""
+        with pytest.raises(ValidationError):
             EstimationInput(
                 project_name="Test",
                 messages_per_second=0,  # Must be > 0
@@ -373,8 +358,8 @@ class TestInputValidation:
             )
             
     def test_zero_record_size(self):
-        """Test validation of record size."""
-        with pytest.raises(ValueError):
+        """avg_record_size_bytes must be > 0."""
+        with pytest.raises(ValidationError):
             EstimationInput(
                 project_name="Test",
                 messages_per_second=1000,
@@ -383,8 +368,8 @@ class TestInputValidation:
             )
             
     def test_negative_statements(self):
-        """Test validation of statement counts."""
-        with pytest.raises(ValueError):
+        """Statement counts are >= 0."""
+        with pytest.raises(ValidationError):
             EstimationInput(
                 project_name="Test",
                 messages_per_second=1000,
@@ -393,6 +378,7 @@ class TestInputValidation:
             )
 
     def test_vm_requires_t_size(self):
+        """worker_node_type=VM requires worker_node_t_size (model)."""
         with pytest.raises(ValidationError, match="worker_node_t_size"):
             EstimationInput(
                 project_name="Test",
@@ -404,6 +390,7 @@ class TestInputValidation:
             )
 
     def test_bare_metal_allows_no_t_size(self):
+        """bare_metal may omit t_size."""
         inp = EstimationInput(
             project_name="Test",
             messages_per_second=1000,
@@ -414,28 +401,28 @@ class TestInputValidation:
         )
         assert inp.worker_node_t_size is None
 
-    def test_vm_tshirt_maps_memory_and_cpu(self):
+    def test_vm_model_validator_overrides_memory_and_cpu_from_t_size(self):
+        """VM T-shirt: model_validator replaces any ad-hoc worker memory/CPU (see VM_TSHIRT in basic)."""
         from flink_estimator.models import VM_TSHIRT_MB_CPU
 
-        for size in ("S", "M", "L"):
-            mb, cpus = VM_TSHIRT_MB_CPU[size]
-            inp = EstimationInput(
-                project_name="SKU",
-                messages_per_second=100,
-                avg_record_size_bytes=100,
-                worker_node_type="VM",
-                worker_node_t_size=size,
-                worker_node_memory_mb=1.0,
-                worker_node_cpu_max=99,
-            )
-            assert inp.worker_node_memory_mb == mb
-            assert inp.worker_node_cpu_max == cpus
+        mb, cpus = VM_TSHIRT_MB_CPU["S"]
+        inp = EstimationInput(
+            project_name="SKU",
+            messages_per_second=100,
+            avg_record_size_bytes=100,
+            worker_node_type="VM",
+            worker_node_t_size="S",
+            worker_node_memory_mb=1.0,
+            worker_node_cpu_max=99,
+        )
+        assert inp.worker_node_memory_mb == mb
+        assert inp.worker_node_cpu_max == cpus
 
 
 # Fixture for common test data
 @pytest.fixture
 def sample_estimation_input():
-    """Fixture providing a standard estimation input for testing."""
+    """Reusable 5k msg/s, 1k bytes, 3+2+1 statements for idempotence and summary checks."""
     return EstimationInput(
         project_name="Sample Test Project",
         messages_per_second=5000,
@@ -447,21 +434,20 @@ def sample_estimation_input():
 
 
 def test_estimation_consistency(sample_estimation_input):
-    """Test that multiple runs of the same input produce consistent results."""
+    """Two runs with the same input: same memory, CPUs, and placeholder processing_load_score."""
     result1 = calculate_flink_estimation(sample_estimation_input)
     result2 = calculate_flink_estimation(sample_estimation_input)
     
-    # Results should be identical
     assert result1.resource_estimates.total_memory_mb == result2.resource_estimates.total_memory_mb
     assert result1.resource_estimates.total_cpus == result2.resource_estimates.total_cpus
     assert result1.resource_estimates.processing_load_score == result2.resource_estimates.processing_load_score
 
 
 class TestDataSkewAndBandwidth:
-    """Test new features: data skew risk and bandwidth capacity."""
-    
+    """Skew changes scaling (e.g. max_parallelism); resource_estimates.total_cpus unchanged; bandwidth in input_summary; key count in scaling."""
+
     def test_data_skew_impact(self):
-        """Test that data skew risk affects resource allocation."""
+        """Identical workload, low/medium/high skew: same total_cpus; high skew caps max_parallelism below medium in this engine."""
         base_params = {
             "project_name": "Skew Test",
             "messages_per_second": 5000,
@@ -485,7 +471,6 @@ class TestDataSkewAndBandwidth:
         high_skew = EstimationInput(**base_params, data_skew_risk="high")
         high_result = calculate_flink_estimation(high_skew)
         
-        # Same workload: CPU/memory totals match; skew affects parallelism recommendations only
         assert high_result.resource_estimates.total_cpus == medium_result.resource_estimates.total_cpus
         assert medium_result.resource_estimates.total_cpus == low_result.resource_estimates.total_cpus
 
@@ -493,8 +478,7 @@ class TestDataSkewAndBandwidth:
         assert high_result.scaling_recommendations.max_parallelism <= high_result.resource_estimates.total_cpus
     
     def test_bandwidth_utilization_uses_megabits_per_second(self):
-        """Throughput is converted MB/s -> Mbps (x8) before comparing to bandwidth_capacity_mbps."""
-        # 10 MB/s == 80 Mbps. 80/100 = 0.8 (not above threshold); 80/99 > 0.8 triggers penalty.
+        """input_summary.bandwidth_capacity_mbps = round(gbps*1000); 100 vs 99 Gbps does not change total_cpus in the current estimator (regression on accidental CPU coupling)."""
         mps = 1048576
         record_bytes = 10
         base = dict(
@@ -517,8 +501,7 @@ class TestDataSkewAndBandwidth:
         assert below_capacity.resource_estimates.total_cpus == at_threshold.resource_estimates.total_cpus
 
     def test_bandwidth_bottleneck(self):
-        """Test that low bandwidth capacity triggers additional CPU overhead."""
-        # High throughput scenario
+        """100 vs 10000 Gbps field: total_cpus and processing_load currently match (bandwidth is not in the CPU path)."""
         base_params = {
             "project_name": "Bandwidth Test",
             "messages_per_second": 100000,
@@ -529,20 +512,18 @@ class TestDataSkewAndBandwidth:
             "medium_statements": 1,
             "complex_statements": 0
         }
-        
-        # Low bandwidth that will be a bottleneck
-        low_bandwidth = EstimationInput(**base_params, bandwidth_capacity_gbps=100)  # Only 100 Mbps
+
+        low_bandwidth = EstimationInput(**base_params, bandwidth_capacity_gbps=100)
         low_bw_result = calculate_flink_estimation(low_bandwidth)
-        
-        # High bandwidth that won't be a bottleneck
-        high_bandwidth = EstimationInput(**base_params, bandwidth_capacity_gbps=10000)  # 10 Gbps
+
+        high_bandwidth = EstimationInput(**base_params, bandwidth_capacity_gbps=10000)
         high_bw_result = calculate_flink_estimation(high_bandwidth)
         
         assert low_bw_result.resource_estimates.total_cpus == high_bw_result.resource_estimates.total_cpus
         assert low_bw_result.resource_estimates.processing_load_score == high_bw_result.resource_estimates.processing_load_score
     
     def test_distinct_keys_impact(self):
-        """Test that number of distinct keys affects resource allocation."""
+        """1k vs 10M keys: higher key space raises recommended_parallelism (TM CPU line); placeholder load score unchanged."""
         base_params = {
             "project_name": "Keys Test",
             "messages_per_second": 10000,
@@ -562,8 +543,6 @@ class TestDataSkewAndBandwidth:
         many_keys = EstimationInput(**base_params, num_distinct_keys=10000000)
         many_keys_result = calculate_flink_estimation(many_keys)
         
-        # Many distinct keys increase TM count from the state/throughput pass (before CPU overwrite) and
-        # scaling recommendations; total_memory_mb in the public API is dominated by ceil(total_cpu_needs).
         assert many_keys_result.scaling_recommendations.recommended_parallelism > few_keys_result.scaling_recommendations.recommended_parallelism
         assert many_keys_result.input_summary.num_distinct_keys == 10_000_000
         assert few_keys_result.input_summary.num_distinct_keys == 1_000
@@ -572,7 +551,7 @@ class TestDataSkewAndBandwidth:
         )
     
     def test_input_summary_includes_new_fields(self):
-        """Test that input summary includes all new fields."""
+        """input_summary carries num_distinct_keys, data_skew_risk, bandwidth_capacity_mbps (from gbps*1000), and statement fields."""
         input_params = EstimationInput(
             project_name="Summary Test",
             messages_per_second=5000,
@@ -587,18 +566,17 @@ class TestDataSkewAndBandwidth:
         
         result = calculate_flink_estimation(input_params)
         
-        # Verify all new fields are in the summary
         assert result.input_summary.num_distinct_keys == 250000
         assert result.input_summary.data_skew_risk == "high"
         assert result.input_summary.bandwidth_capacity_mbps == 500_000
         
-        # Verify existing fields still work
         assert result.input_summary.messages_per_second == 5000
         assert result.input_summary.avg_record_size_bytes == 1024
         assert result.input_summary.total_statements == 3
 
 
-def test_nb_worker_nodes_floors_total_nodes():
+def test_nb_worker_nodes_in_input_and_total_worker_node_needed():
+    """input_summary keeps requested nb_worker_nodes; total_worker_node_needed is min(nodes_used, nb_worker_nodes) in the engine."""
     tiny = EstimationInput(
         project_name="Floor nodes",
         messages_per_second=100,
@@ -607,11 +585,12 @@ def test_nb_worker_nodes_floors_total_nodes():
         nb_worker_nodes=40,
     )
     result = calculate_flink_estimation(tiny)
-    assert result.resource_estimates.total_nodes >= 40
+    assert result.input_summary.nb_worker_nodes == 40
+    assert result.resource_estimates.total_worker_node_needed == 1
 
 
 def test_calculation_properties(sample_estimation_input):
-    """Test mathematical properties of the estimation calculation."""
+    """TM count and CPUs positive; per-TM memory at least 1 GiB; throughput matches mps*record_size formula."""
     result = calculate_flink_estimation(sample_estimation_input)
     
     tm = result.cluster_recommendations.taskmanagers
@@ -619,7 +598,6 @@ def test_calculation_properties(sample_estimation_input):
     assert tm.total_cpus >= 1
     assert tm.total_memory_mb >= tm.count * 1024
 
-    # Throughput calculation should match manual calculation
     expected_throughput = (sample_estimation_input.messages_per_second * 
                           sample_estimation_input.avg_record_size_bytes) / (1024 * 1024)
     assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(expected_throughput, rel=1e-3)

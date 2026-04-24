@@ -97,7 +97,6 @@ from .models import (
 SAVED_ESTIMATIONS_DIR = "saved_estimations"
 
 # Host = worker node parameters
-NB_CPU_PER_NODE = 8
 OS_MEM_MB = 512
 
 # record per second per core per statement type
@@ -108,7 +107,7 @@ COMPLEX_RPS= 2500
 # Flink Task Manager and job manager parameters
 JOBMANAGER_MEM_MB = 2048
 JOBMANAGER_CPU_CORES = 1  # Minimum viable JM CPU (Kubernetes cpu units) for 9 TM.
-JM_TSHIRT_MB_CPU = {
+JM_TSHIRT_CPU_MB = {
     "S": (1,2048),
     "M": (2,4096),
     "L": (4,8192)
@@ -117,7 +116,6 @@ JM_TSHIRT_MB_CPU = {
 TM_MEM_MB = 4096  # Task Manager total process memory size in MB
 TM_JVM_OVERHEAD_MB = 512 # Task Manager JVM overhead memory size in MB
 TM_MM_PERCENT = 0.4 # percentage of flink process memory allocate to state
-NB_TM_PER_JM = 24   # number of task managers per job manager
 TM_vCPUs = 4
 
 
@@ -142,19 +140,21 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     logger.info("input_params: %s", input_params.model_dump_json(indent=2))
     total_throughput_mb_per_sec = input_params.total_throughput_mb_per_sec
     jm_cpu,jm_memory = _assess_jobmanager_size(input_params)
-    num_taskmanagers, node_allocations, num_jm = _assess_nb_taskmanagers(input_params, jm_memory)
+    total_memory_mb, nb_tm_state, node_allocations = _assess_taskmanager_based_on_state(input_params, jm_memory)
 
-    total_cpu_need_for_throughput, nb_worker_nodes = _assess_cpu_needs(total_throughput_mb_per_sec, input_params, jm_cpu)
+    nb_tm_cpu, total_cpu_need_for_throughput, nb_worker_nodes = _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params, jm_cpu)
     logger.info("total_cpu_need_for_throughput: %s", total_cpu_need_for_throughput)
     # State or throughput drive CPU count
-    total_cpu_needs= max(total_cpu_need_for_throughput, num_taskmanagers* TM_vCPUs)
-    taskmanager_memory_mb = num_taskmanagers * TM_MEM_MB
-    total_memory_mb = taskmanager_memory_mb + jm_memory * num_jm
-    total_nodes = max(nb_worker_nodes, len(node_allocations))
+    total_cpu_needs= max(total_cpu_need_for_throughput, nb_tm_state* TM_vCPUs)
+    nb_task_managers = max(nb_tm_state, nb_tm_cpu)
+    taskmanager_memory_mb = nb_task_managers * TM_MEM_MB
+
+    non_zero_nodes = sum(1 for n in node_allocations if n > 0)
+    total_nodes = min(non_zero_nodes, nb_worker_nodes)
 
     gbps = input_params.bandwidth_capacity_gbps
     bandwidth_mbps = int(round(gbps * 1000))
-
+    # From there build the report
     input_summary = InputSummary(
         messages_per_second=input_params.messages_per_second,
         avg_record_size_bytes=input_params.avg_record_size_bytes,
@@ -178,26 +178,26 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     resource_estimates = ResourceEstimates(
         total_memory_mb=math.ceil(total_memory_mb),
         total_cpus=math.ceil(total_cpu_needs),
-        total_nodes=math.ceil(total_nodes),
+        total_worker_node_needed=math.ceil(total_nodes),
         processing_load_score=processing_load_score,
     )
 
     jobmanager_config = JobManagerConfig(
-        count=num_jm,
+        count=1,
         memory_mb=math.ceil(jm_memory),
-        cpu_cores=float(jm_cpu),
+        total_cpus=float(jm_cpu),
     )
 
-    tm_count = num_taskmanagers
+
     tm_total_mem = math.ceil(taskmanager_memory_mb)
     memory_gb_each = (
-        round((tm_total_mem / tm_count) / 1024, 2) if tm_count else 0.0
+        round((tm_total_mem / nb_task_managers),0) if nb_task_managers else 0.0
     )
     taskmanager_config = TaskManagerConfig(
-        count=tm_count,
+        count=nb_task_managers,
         total_memory_mb=tm_total_mem,
         total_cpus=math.ceil(total_cpu_needs - jm_cpu),
-        memory_gb_each=memory_gb_each,
+        memory_mb_each=memory_gb_each,
     )
 
     cluster_recommendations = ClusterRecommendations(
@@ -248,7 +248,7 @@ def _assess_jobmanager_size(input_params: EstimationInput) -> tuple[int, int]:
         jm_tshirt_size ='M'
     else:
         jm_tshirt_size ='L'
-    return JM_TSHIRT_MB_CPU[jm_tshirt_size][0], JM_TSHIRT_MB_CPU[jm_tshirt_size][1]
+    return JM_TSHIRT_CPU_MB[jm_tshirt_size][0], JM_TSHIRT_CPU_MB[jm_tshirt_size][1]
 
 
 def _greedy_pack_taskmanagers(
@@ -283,33 +283,31 @@ def _greedy_pack_taskmanagers(
     return alloc, max(alloc), True, remaining
 
 
-def _assess_nb_taskmanagers(input_params: EstimationInput, jm_memory: int) -> tuple[int, list[int], int]:
+def _assess_taskmanager_based_on_state(input_params: EstimationInput, jm_memory: int) -> tuple[int, int, list[int]]:
     """
     Assess the number of task managers needed based on state size and expected throughput.
     Args:
         input_params: The input parameters used for estimation
     Returns:
+        total_memory_mb: The total memory needed for the task managers and job manager
         num_taskmanagers: The number of task managers needed across all worker nodes
         max_tm_per_node: After greedy placement, the largest number of TMs on any
             one worker node (0 if placement failed, which should not happen).
-        num_jm: The number of job managers needed
     """
     # potentially more than memory of one task manager
-    total_flink_process_mem = math.ceil(input_params.num_distinct_keys 
+    total_managed_memory_mb = math.ceil(input_params.num_distinct_keys 
                                             * (input_params.medium_statements + input_params.complex_statements) 
                                             * input_params.number_flink_applications
                                             * input_params.avg_record_size_bytes  
                                             / (1024 * 1024)
                                             )
-    total_flink_process_mem = total_flink_process_mem / TM_MM_PERCENT
-    logger.info("total_flink_process_mem: %s MB", total_flink_process_mem)
-    # Can we have enough memory with the current worknodes, and can we place each TM?
+    total_flink_process_memory_mb = total_managed_memory_mb / TM_MM_PERCENT
+    logger.info("total_flink_process_mem: %s MB", total_flink_process_memory_mb)
+    # Do we have enough memory with the current worker nodes, and where we place each TM on the worker nodes?
     free_mem_per_node: list[int] = []
     total_free_mem = 0.0
-    total_mem_needed_mb = max(TM_MEM_MB, total_flink_process_mem)
+    total_mem_needed_mb = max(TM_MEM_MB, total_flink_process_memory_mb)
     nb_taskmanagers = max(1, math.ceil(total_mem_needed_mb / TM_MEM_MB))
-    nb_jm = max(1, math.ceil(nb_taskmanagers / NB_TM_PER_JM))
-    jm_memory = nb_jm * jm_memory
     logger.info("jm_memory: %s MB", jm_memory)
     while True:
         free_mem_per_node, total_free_mem = _assess_free_mem_per_node(input_params, jm_memory)
@@ -335,24 +333,28 @@ def _assess_nb_taskmanagers(input_params: EstimationInput, jm_memory: int) -> tu
         )
         input_params.nb_worker_nodes += 1
 
+    total_mem_needed_mb = math.ceil(total_mem_needed_mb) + jm_memory
+    tm_allocations_wnodes = [math.ceil(n) for n in tm_allocations_wnodes]
     logger.info("total_mem_needed_mb: %s MB", total_mem_needed_mb)
     logger.info("free_mem_per_node: %s", free_mem_per_node)
     logger.info("nb_taskmanagers: %s", nb_taskmanagers)
     logger.info("tm_allocations_wnodes: %s", tm_allocations_wnodes)
     logger.info("max_tm_per_node (largest count on one node): %s", max_tm_per_node)
-    return nb_taskmanagers, tm_allocations_wnodes, nb_jm
+    return total_mem_needed_mb, nb_taskmanagers, tm_allocations_wnodes
 
 def _assess_free_mem_per_node(input_params: EstimationInput, jm_memory: int) -> tuple[list[int], int]:
+    """
+    """
     free_mem_per_node = []
-    total_mem = 0
+    total_free_mem = 0
     for wnode in range(input_params.nb_worker_nodes):
          free_mem_per_node.append(input_params.worker_node_memory_mb - OS_MEM_MB)
-         total_mem += free_mem_per_node[wnode]
+         total_free_mem += free_mem_per_node[wnode]
     free_mem_per_node[0] = free_mem_per_node[0] - jm_memory * input_params.number_flink_applications
-    total_mem = total_mem - jm_memory * input_params.number_flink_applications
+    total_free_mem = total_free_mem - jm_memory * input_params.number_flink_applications
     logger.info("free_mem_per_node: %s MB", free_mem_per_node)
-    logger.info("total_free_mem: %s MB", total_mem)
-    return free_mem_per_node, total_mem
+    logger.info("total_free_mem: %s MB", total_free_mem)
+    return free_mem_per_node, total_free_mem
 
 
 
@@ -413,7 +415,7 @@ def _compute_scaling_recommendations(
     )
 
 
-def _assess_cpu_needs(total_throughput_mb_per_sec, input_params: EstimationInput, jm_cpu: int) -> tuple[int, int]:  
+def _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params: EstimationInput, jm_cpu: int) -> tuple[int, int, int]:  
     """
     Assess the number of CPU cores needed based on the total throughput and the expected latency.
     Args:
@@ -425,17 +427,18 @@ def _assess_cpu_needs(total_throughput_mb_per_sec, input_params: EstimationInput
         nb_worker_nodes: The number of worker nodes needed
     """
     simple_throughput_mbps = SIMPLE_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    simple_statement_cpu_needs = max(TM_vCPUs,  total_throughput_mb_per_sec / simple_throughput_mbps) * input_params.simple_statements
+    simple_statement_cpu_needs = min(TM_vCPUs,  total_throughput_mb_per_sec / simple_throughput_mbps) * input_params.simple_statements
     
     medium_throughput_mbps = MEDIUM_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    medium_statement_cpu_needs = max(TM_vCPUs, total_throughput_mb_per_sec /  medium_throughput_mbps) * input_params.medium_statements
+    medium_statement_cpu_needs = min(TM_vCPUs, total_throughput_mb_per_sec /  medium_throughput_mbps) * input_params.medium_statements
     
     complex_throughput_mbps = COMPLEX_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    complex_statement_cpu_needs = max(TM_vCPUs,  total_throughput_mb_per_sec/ complex_throughput_mbps) * input_params.complex_statements
+    complex_statement_cpu_needs = min(TM_vCPUs,  total_throughput_mb_per_sec/ complex_throughput_mbps) * input_params.complex_statements
     
-    total_cpu_needs = math.ceil((simple_statement_cpu_needs + medium_statement_cpu_needs + complex_statement_cpu_needs) * _latency_cpu_factor(input_params.expected_latency_seconds)
+    total_cpu_needs = math.ceil((simple_statement_cpu_needs + medium_statement_cpu_needs + complex_statement_cpu_needs) 
+                     * _latency_cpu_factor(input_params.expected_latency_seconds)
                       + jm_cpu) * input_params.number_flink_applications
-    logger.info("total_cpu_needs: %s", total_cpu_needs)
+
     nb_worker_nodes = input_params.nb_worker_nodes
     if input_params.worker_node_type == "VM" and input_params.worker_node_t_size is not None:
         cores_per_node = VM_TSHIRT_MB_CPU[input_params.worker_node_t_size][1]
@@ -446,7 +449,14 @@ def _assess_cpu_needs(total_throughput_mb_per_sec, input_params: EstimationInput
         if cpu_capacity_cross_nodes >= total_cpu_needs:
             break
         nb_worker_nodes += 1
-    return total_cpu_needs, nb_worker_nodes
+    nb_task_managers = math.ceil((total_cpu_needs - jm_cpu) / TM_vCPUs)
+    logger.info("simple_statement_cpu_needs: %s for %s MB/s", simple_statement_cpu_needs, simple_throughput_mbps    )
+    logger.info("medium_statement_cpu_needs: %s for %s MB/s", medium_statement_cpu_needs, medium_throughput_mbps)
+    logger.info("complex_statement_cpu_needs: %s for %s MB/s", complex_statement_cpu_needs, complex_throughput_mbps)
+    logger.info("total_cpu_needs: %s", total_cpu_needs)
+    logger.info("nb_worker_nodes: %s", nb_worker_nodes)
+    logger.info("nb_task_managers: %s", nb_task_managers)
+    return nb_task_managers, total_cpu_needs, nb_worker_nodes
 
 
 

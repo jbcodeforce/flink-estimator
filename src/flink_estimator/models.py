@@ -27,7 +27,7 @@ class EstimationInput(BaseModel):
     bandwidth_capacity_gbps: int = Field(
         default=10, gt=0, description="Network bandwidth capacity in Gbps (decimal gigabits per second)"
     )
-    expected_latency_seconds: float = Field(default=1.0, gt=0, description="Expected end-to-end latency in seconds")
+    expected_latency_seconds: float = Field(default=5.0, gt=0, description="Expected end-to-end latency in seconds")
     simple_statements: int = Field(default=2, ge=0, description="Number of simple statements")
     medium_statements: int = Field(default=1, ge=0, description="Number of medium complexity statements")
     complex_statements: int = Field(default=1, ge=0, description="Number of complex statements")
@@ -45,7 +45,7 @@ class EstimationInput(BaseModel):
         description="Maximum CPU cores per worker node / TaskManager (instance shape limit)",
     )
     nb_worker_nodes: int = Field(
-        default=3,
+        default=1,  # Even if for HA we need 3, starts with 1 so we can use the tool to size dev environments
         ge=1,
         description="Number of worker nodes (floor for total_nodes in estimates)",
     )
@@ -107,7 +107,7 @@ class ResourceEstimates(BaseModel):
     """Estimated resource requirements"""
     total_memory_mb: int
     total_cpus: int
-    total_nodes: int
+    total_worker_node_needed: int
     processing_load_score: float
 
 
@@ -115,7 +115,7 @@ class JobManagerConfig(BaseModel):
     """JobManager configuration specifications"""
     count: int
     memory_mb: int
-    cpu_cores: float = Field(..., ge=0.5, description="CPU cores (Kubernetes cpu units; fractional allowed)")
+    total_cpus: float = Field(..., ge=0.5, description="CPU cores (Kubernetes cpu units; fractional allowed)")
 
 
 class TaskManagerConfig(BaseModel):
@@ -123,7 +123,7 @@ class TaskManagerConfig(BaseModel):
     count: int
     total_memory_mb: int
     total_cpus: int
-    memory_gb_each: float
+    memory_mb_each: float
 
 
 class ClusterRecommendations(BaseModel):

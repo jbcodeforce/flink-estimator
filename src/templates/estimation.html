@@ -51,8 +51,8 @@
                 <label for="nb_worker_nodes">Number of worker nodes (min 3 for HA):</label>
                 <input type="number" id="nb_worker_nodes" name="nb_worker_nodes"
                     required min="1" step="1"
-                    value="{{ p.get('nb_worker_nodes', 3) }}" placeholder="3">
-                <div class="help-text">Minimum worker nodes to run Task Managers (at least 3 for HA).</div>
+                    value="{{ p.get('nb_worker_nodes', 1) }}" placeholder="1">
+                <div class="help-text">Minimum worker nodes to run Task Managers (1 for Dev, at least 3 for HA).</div>
             </div>
             <div class="form-group">
                 <label for="worker_node_type">Worker node type:</label>

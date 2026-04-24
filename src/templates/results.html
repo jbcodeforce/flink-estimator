@@ -61,7 +61,7 @@
         {% set tm_cpu_each = (tm.total_cpus + tm.count - 1) // tm.count if tm.count else 0 %}
         <!-- Resource Estimates -->
         <div class="result-section">
-            <h2>Resource Estimates</h2>
+            <h2>Full Resource Estimates</h2>
             <div class="scaling-grid">
                 <div class="resource-card">
                     <h3>Total Memory</h3>
@@ -75,15 +75,15 @@
                 </div>
                 <div class="resource-card">
                     <h3>Total Nodes</h3>
-                    <div class="resource-value">{{ estimation.resource_estimates.total_nodes }}</div>
+                    <div class="resource-value">{{ estimation.resource_estimates.total_worker_node_needed }}</div>
                     <div class="resource-subtext">Recommended cores</div>
                 </div>
             </div>
         </div>
 
-        <!-- Cluster Recommendations -->
+        <!-- Flink Recommendations -->
         <div class="result-section">
-            <h2>Cluster Configuration</h2>
+            <h2>Flink Configuration</h2>
             
             <div class="cluster-config">
                 <div class="config-section">
@@ -99,7 +99,7 @@
                         </div>
                         <div class="config-item">
                             <span class="config-label">CPU Cores:</span>
-                            <span class="config-value">{{ estimation.cluster_recommendations.jobmanager.cpu_cores }}</span>
+                            <span class="config-value">{{ estimation.cluster_recommendations.jobmanager.total_cpus }}</span>
                         </div>
                     </div>
                 </div>
@@ -113,7 +113,7 @@
                         </div>
                         <div class="config-item">
                             <span class="config-label">Memory per TM:</span>
-                            <span class="config-value">{{ "{:,}".format(tm_memory_mb) }} MB ({{ tm.memory_gb_each }} GB)</span>
+                            <span class="config-value">{{ "{:,}".format(tm_memory_mb) }} MB ({{ tm.memory_mb_each }} MB)</span>
                         </div>
                         <div class="config-item">
                             <span class="config-label">Total Memory:</span>
