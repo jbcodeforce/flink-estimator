@@ -81,6 +81,59 @@
             </div>
         </div>
 
+        {% if estimation.sizing_diagnostics %}
+        {% set diag = estimation.sizing_diagnostics %}
+        <div class="result-section">
+            <h2>Sizing Diagnostics</h2>
+            <p class="section-hint">Which constraint drives TaskManager count, total CPU, and per-TM memory.</p>
+            <div class="scaling-grid bounding-grid">
+                <div class="bounding-card">
+                    <h4>TaskManager count</h4>
+                    <div class="bounding-badge bounding-{{ diag.tm_count_bounding_factor }}">
+                        {% if diag.tm_count_bounding_factor == 'cpu' %}
+                        CPU bound (throughput)
+                        {% elif diag.tm_count_bounding_factor == 'memory' %}
+                        Memory bound (state)
+                        {% else %}
+                        Balanced
+                        {% endif %}
+                    </div>
+                    <div class="bounding-detail">State pass: {{ diag.nb_tm_state }} TM · CPU pass: {{ diag.nb_tm_cpu }} TM</div>
+                </div>
+                <div class="bounding-card">
+                    <h4>Total CPU</h4>
+                    <div class="bounding-badge bounding-{{ diag.total_cpu_bounding_factor }}">
+                        {% if diag.total_cpu_bounding_factor == 'throughput' %}
+                        Throughput bound
+                        {% else %}
+                        TM slot bound
+                        {% endif %}
+                    </div>
+                    <div class="bounding-detail">Statement throughput vs {{ tm.count }} × 4 vCPU slots</div>
+                </div>
+                <div class="bounding-card">
+                    <h4>Per-TM memory</h4>
+                    <div class="bounding-badge bounding-{{ diag.per_tm_memory_bounding_factor }}">
+                        {% if diag.per_tm_memory_bounding_factor == 'state' %}
+                        State bound
+                        {% elif diag.per_tm_memory_bounding_factor == 'buffers' %}
+                        Buffer bound
+                        {% else %}
+                        Baseline (4 GB)
+                        {% endif %}
+                    </div>
+                    <div class="bounding-detail">{{ "{:,.0f}".format(diag.tm_process_memory_mb) }} MB TM · {{ diag.buffer_mb }} MB buffer heuristic</div>
+                </div>
+            </div>
+            <div class="diagnostics-raw">
+                <div class="summary-item">
+                    <span class="label">Raw Flink process memory:</span>
+                    <span class="value">{{ "{:,.2f}".format(diag.raw_flink_process_mb) }} MB</span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Flink Recommendations -->
         <div class="result-section">
             <h2>Flink Configuration</h2>

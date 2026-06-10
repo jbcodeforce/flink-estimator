@@ -137,6 +137,24 @@ class CapacityAnalysis(BaseModel):
     total_flink_applications: int
 
 
+class SizingDiagnostics(BaseModel):
+    """Intermediate sizing values and which constraint drives TaskManager count, CPU, and per-TM memory."""
+    nb_tm_state: int = Field(..., description="TaskManager count from state/memory pass at 4096 MB per TM")
+    nb_tm_cpu: int = Field(..., description="TaskManager count from throughput/CPU pass")
+    raw_flink_process_mb: float = Field(..., description="Aggregate Flink process memory from managed state heuristic")
+    tm_process_memory_mb: int = Field(..., description="Resolved per-TaskManager process memory (MB)")
+    buffer_mb: int = Field(..., description="Network/in-flight buffer heuristic per TM (MB)")
+    tm_count_bounding_factor: Literal["cpu", "memory", "balanced"] = Field(
+        ..., description="Whether TM count is driven by throughput CPU vs state at resolved memory"
+    )
+    total_cpu_bounding_factor: Literal["throughput", "tm_slots"] = Field(
+        ..., description="Whether total CPUs follow statement throughput vs TM count × slots"
+    )
+    per_tm_memory_bounding_factor: Literal["state", "buffers", "baseline"] = Field(
+        ..., description="Dominant term in per-TM process memory sizing"
+    )
+
+
 class ScalingRecommendations(BaseModel):
     """Scaling and performance recommendations"""
     min_parallelism: int
@@ -152,6 +170,7 @@ class EstimationResult(BaseModel):
     cluster_recommendations: ClusterRecommendations
     scaling_recommendations: Optional[ScalingRecommendations] = None
     capacity_analysis: CapacityAnalysis
+    sizing_diagnostics: Optional[SizingDiagnostics] = None
 
 class EstimationMetadata(BaseModel):
     """Metadata for saved estimations"""

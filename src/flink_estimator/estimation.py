@@ -91,6 +91,7 @@ from .models import (
     EstimationMetadata,
     SavedEstimation,
     CapacityAnalysis,
+    SizingDiagnostics,
     VM_TSHIRT_MB_CPU
 )
 
@@ -139,7 +140,7 @@ def _managed_memory_percent_by_latency(expected_latency_seconds: float) -> float
 
 def _state_flink_process_memory_mb(input_params: EstimationInput) -> float:
     """
-    The Flink Process Memoery is computed from the managed memory as a percentage of it.
+    The Flink Process Memory is computed from the managed memory as a percentage of it.
     The managed memory is computed from the number of distinct keys, the number of medium and complex statements, the number of flink applications, and the average record size.
     Finally latency may force to have memory use for network buffers so the percentage
     is adapted when there is a need to tighten the latency.
@@ -281,6 +282,61 @@ def _resolve_tm_process_memory_mb(
     return P, N
 
 
+def _compute_sizing_diagnostics(
+    input_params: EstimationInput,
+    total_throughput_mb_per_sec: float,
+    raw_flink_process_mb: float,
+    nb_tm_state: int,
+    nb_tm_cpu: int,
+    nb_task_managers: int,
+    tm_process_memory_mb: int,
+    total_cpu_need_for_throughput: int,
+) -> SizingDiagnostics:
+    """
+    Compare state/memory vs throughput/CPU sizing paths and label the dominant constraint.
+    """
+    per_tm_state = math.ceil(
+        max(TM_MEM_MB, raw_flink_process_mb) / max(1, nb_tm_state)
+    )
+    buffer_mb = _network_buffer_min_process_memory_mb(
+        input_params, total_throughput_mb_per_sec, nb_task_managers
+    )
+    n_s2 = max(
+        1,
+        math.ceil(max(TM_MEM_MB, raw_flink_process_mb) / max(1, tm_process_memory_mb)),
+    )
+    if nb_tm_cpu > n_s2:
+        tm_count_bounding_factor = "cpu"
+    elif n_s2 > nb_tm_cpu:
+        tm_count_bounding_factor = "memory"
+    else:
+        tm_count_bounding_factor = "balanced"
+
+    tm_slots_cpu = nb_task_managers * TM_vCPUs
+    if total_cpu_need_for_throughput > tm_slots_cpu:
+        total_cpu_bounding_factor = "throughput"
+    else:
+        total_cpu_bounding_factor = "tm_slots"
+
+    if buffer_mb > TM_MEM_MB and buffer_mb > per_tm_state:
+        per_tm_memory_bounding_factor = "buffers"
+    elif raw_flink_process_mb > TM_MEM_MB or per_tm_state > TM_MEM_MB:
+        per_tm_memory_bounding_factor = "state"
+    else:
+        per_tm_memory_bounding_factor = "baseline"
+
+    return SizingDiagnostics(
+        nb_tm_state=nb_tm_state,
+        nb_tm_cpu=nb_tm_cpu,
+        raw_flink_process_mb=round(raw_flink_process_mb, 2),
+        tm_process_memory_mb=tm_process_memory_mb,
+        buffer_mb=buffer_mb,
+        tm_count_bounding_factor=tm_count_bounding_factor,
+        total_cpu_bounding_factor=total_cpu_bounding_factor,
+        per_tm_memory_bounding_factor=per_tm_memory_bounding_factor,
+    )
+
+
 def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResult:
     """
     Calculate Flink resource estimation based on input parameters.
@@ -357,7 +413,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     )
 
     jobmanager_config = JobManagerConfig(
-        count=1,
+        count=max(1, input_params.number_flink_applications),
         memory_mb=math.ceil(jm_memory),
         total_cpus=float(jm_cpu),
     )
@@ -389,12 +445,23 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         total_flink_statements = input_params.total_statements * input_params.number_flink_applications,
         total_flink_applications = input_params.number_flink_applications
     )
+    sizing_diagnostics = _compute_sizing_diagnostics(
+        input_params,
+        total_throughput_mb_per_sec,
+        raw_flink,
+        nb_tm_state,
+        nb_tm_cpu,
+        nb_task_managers,
+        tm_process_memory_mb,
+        total_cpu_need_for_throughput,
+    )
     result = EstimationResult(
         input_summary=input_summary,
         resource_estimates=resource_estimates,
         cluster_recommendations=cluster_recommendations,
         scaling_recommendations=scaling_recommendations,
         capacity_analysis=capacity_analysis,
+        sizing_diagnostics=sizing_diagnostics,
     )
     logger.info("result: %s", result.model_dump_json(indent=2))
     if os.environ.get("FLINK_ESTIMATOR_DEBUG", "").strip().lower() in ("1", "true", "yes"):

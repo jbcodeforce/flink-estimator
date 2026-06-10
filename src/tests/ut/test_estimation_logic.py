@@ -164,6 +164,77 @@ class TestTaskManagerCountCpuConstraint:
         assert tm.total_cpus <= result.resource_estimates.total_cpus
         assert tm.total_cpus >= 1
 
+        diag = result.sizing_diagnostics
+        assert diag is not None
+        assert diag.total_cpu_bounding_factor == "throughput"
+
+
+class TestSizingDiagnostics:
+    """SizingDiagnostics on EstimationResult labels CPU vs memory bounding."""
+
+    def test_cpu_bound_high_throughput_low_state(self):
+        """High throughput, many simple ops: TM count driven by CPU path."""
+        result = calculate_flink_estimation(
+            EstimationInput(
+                project_name="CPU bound",
+                messages_per_second=524288,
+                avg_record_size_bytes=1024,
+                num_distinct_keys=1000,
+                expected_latency_seconds=10.0,
+                simple_statements=10,
+                medium_statements=0,
+                complex_statements=0,
+            )
+        )
+        diag = result.sizing_diagnostics
+        assert diag is not None
+        assert diag.tm_count_bounding_factor == "cpu"
+        assert diag.nb_tm_cpu > diag.nb_tm_state
+        assert diag.total_cpu_bounding_factor == "throughput"
+
+    def test_memory_bound_large_state(self):
+        """Many keys with medium/complex statements: TM count or per-TM memory from state."""
+        result = calculate_flink_estimation(
+            EstimationInput(
+                project_name="Memory bound",
+                messages_per_second=1000,
+                avg_record_size_bytes=4096,
+                num_distinct_keys=50_000_000,
+                expected_latency_seconds=10.0,
+                simple_statements=0,
+                medium_statements=2,
+                complex_statements=2,
+                worker_node_memory_mb=65536,
+                worker_node_cpu_max=32,
+            )
+        )
+        diag = result.sizing_diagnostics
+        assert diag is not None
+        assert diag.tm_count_bounding_factor == "memory"
+        assert diag.per_tm_memory_bounding_factor == "state"
+        assert diag.total_cpu_bounding_factor == "tm_slots"
+
+    def test_buffer_bound_tight_latency(self):
+        """Tight latency on high throughput: per-TM memory often buffer-driven."""
+        result = calculate_flink_estimation(
+            EstimationInput(
+                project_name="Buffer bound",
+                messages_per_second=2_000_000,
+                avg_record_size_bytes=2048,
+                num_distinct_keys=100,
+                expected_latency_seconds=0.5,
+                simple_statements=1,
+                medium_statements=0,
+                complex_statements=0,
+                worker_node_memory_mb=256 * 1024,
+                worker_node_cpu_max=64,
+            )
+        )
+        diag = result.sizing_diagnostics
+        assert diag is not None
+        assert diag.per_tm_memory_bounding_factor in ("buffers", "state")
+        assert diag.buffer_mb > 0
+
 
 class TestLatencyBufferMemory:
     """Tight expected_latency increases TM process memory (network / in-flight buffer heuristic)."""
