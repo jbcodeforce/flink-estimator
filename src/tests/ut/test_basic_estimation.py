@@ -1,28 +1,32 @@
 """
 Unit tests: internal estimation helpers and VM-integrated E2E regressions.
 
-Covers _defaulting_input_params; _assess_jobmanager_size, _assess_free_mem_per_node,
-_assess_taskmanager_based_on_state, _assess_taskmanager_based_on_throughput; _greedy_pack_taskmanagers;
+Covers _defaulting_input_params; _assess_jobmanager_size; _throughput_cores (uncapped CPU);
+_state_disk_gb; _pack_worker_nodes; _resolve_per_tm_memory_mb; _network_buffer_min_process_memory_mb;
 _latency_cpu_factor; and full calculate_flink_estimation with VM t-shirts or custom worker fields.
+
+Sizing model (see docs/superpowers/specs/2026-06-23-flink-estimator-sizing-model-redesign-design.md):
+  PRIMARY   cp_flink_nodes = ceil(total_cores / 8); total_cores = throughput cores + JM cores.
+  SECONDARY worker/VM nodes = bin-pack TM RAM and RocksDB local disk; CPU never bounds node count.
 """
 
 import pytest
 import math
 from flink_estimator.models import EstimationInput
-from flink_estimator.estimation import(
+from flink_estimator.estimation import (
     calculate_flink_estimation,
-     _defaulting_input_params, 
-     _assess_taskmanager_based_on_state,
-     _assess_jobmanager_size,
-     _assess_free_mem_per_node,
-     _greedy_pack_taskmanagers,
-     _assess_taskmanager_based_on_throughput,
-     _latency_cpu_factor,   
-     _managed_memory_percent_by_latency,
-     _state_flink_process_memory_mb,    
-     _network_buffer_min_process_memory_mb,
-     TM_MEM_MB,
-     )
+    _defaulting_input_params,
+    _assess_jobmanager_size,
+    _throughput_cores,
+    _state_disk_gb,
+    _pack_worker_nodes,
+    _resolve_per_tm_memory_mb,
+    _network_buffer_min_process_memory_mb,
+    _latency_cpu_factor,
+    CP_FLINK_NODE_CORES,
+    STATE_DISK_AMPLIFICATION,
+    TM_MEM_MB,
+)
 import os
 
 os.environ.pop("FLINK_ESTIMATOR_DEBUG", None)
@@ -39,42 +43,33 @@ def vm_s_estimation_input() -> EstimationInput:
 
 
 class TestPrivateHelpers:
-    """Private helpers: _defaulting_input_params, _assess_*, _greedy_pack_taskmanagers, _latency_cpu_factor."""
+    """Private helpers: _defaulting_input_params, _assess_jobmanager_size, _throughput_cores, packing, disk."""
 
     def test_vm_default_parameters(self, vm_s_estimation_input):
-        """VM S/M/L via _defaulting_input_params: memory and CPU from t-shirt; other fields stay model defaults."""
+        """VM S/M/L via _defaulting_input_params: memory, CPU, and local disk from t-shirt."""
         input_params = _defaulting_input_params(vm_s_estimation_input)
         assert input_params.worker_node_memory_mb == 16384
         assert input_params.worker_node_cpu_max == 8
+        assert input_params.worker_node_disk_gb == 512
         assert input_params.nb_worker_nodes == 1
         # Statement counts come from EstimationInput model defaults, not from _defaulting_input_params
         assert input_params.simple_statements == 2
         assert input_params.medium_statements == 1
         assert input_params.complex_statements == 1
-        assert input_params.data_skew_risk == "low"
-        assert input_params.bandwidth_capacity_gbps == 10
-        assert input_params.expected_latency_seconds == 5.0
 
-        # Medium VM
-        input_params = EstimationInput(
-            project_name="VM Test",
-            worker_node_type="VM",
-            worker_node_t_size="M"
+        input_params = _defaulting_input_params(
+            EstimationInput(project_name="VM Test", worker_node_type="VM", worker_node_t_size="M")
         )
-        input_params = _defaulting_input_params(input_params)
         assert input_params.worker_node_memory_mb == 65536
         assert input_params.worker_node_cpu_max == 16
-        # Large VM
-        input_params = EstimationInput(
-            project_name="VM Test",
-            worker_node_type="VM",
-            worker_node_t_size="L"
+        assert input_params.worker_node_disk_gb == 2048
+
+        input_params = _defaulting_input_params(
+            EstimationInput(project_name="VM Test", worker_node_type="VM", worker_node_t_size="L")
         )
-        input_params = _defaulting_input_params(input_params)
-        print(input_params.model_dump_json(indent=2))
         assert input_params.worker_node_memory_mb == 96448
         assert input_params.worker_node_cpu_max == 48
-
+        assert input_params.worker_node_disk_gb == 6144
 
     def test_latency_cpu_factor(self):
         """_latency_cpu_factor: multipliers at 0.5, 1.0, 3.0, 5.0, 10.0 s expected latency."""
@@ -87,389 +82,232 @@ class TestPrivateHelpers:
     def test_jobmanager_size(self, vm_s_estimation_input):
         """_assess_jobmanager_size: JM vCPU and memory scale with num_distinct_keys tiers (10M, 100M, 1B+)."""
         input_params = _defaulting_input_params(vm_s_estimation_input)
-        input_params.num_distinct_keys=10_000_000
-        input_params.avg_record_size_bytes=512
-        input_params.complex_statements=1
-        input_params.medium_statements=1
-        input_params.simple_statements=1
-        jm_cpu,jm_memory= _assess_jobmanager_size(input_params)
-        print(f"jm_cpu: {jm_cpu}, jm_memory: {jm_memory}")
-        assert jm_cpu == 1
-        assert jm_memory == 2048
-        input_params.num_distinct_keys=100_000_000
-        jm_cpu,jm_memory= _assess_jobmanager_size(input_params)
-        print(f"jm_cpu: {jm_cpu}, jm_memory: {jm_memory}")
-        assert jm_cpu == 2
-        assert jm_memory == 4096
-        input_params.num_distinct_keys=1000000000
-        jm_cpu,jm_memory= _assess_jobmanager_size(input_params)
-        print(f"jm_cpu: {jm_cpu}, jm_memory: {jm_memory}")
-        assert jm_cpu == 4
-        assert jm_memory == 8192
+        input_params.num_distinct_keys = 10_000_000
+        assert _assess_jobmanager_size(input_params) == (1, 2048)
+        input_params.num_distinct_keys = 100_000_000
+        assert _assess_jobmanager_size(input_params) == (2, 4096)
+        input_params.num_distinct_keys = 1_000_000_000
+        assert _assess_jobmanager_size(input_params) == (4, 8192)
 
-    def test_free_mem_per_node(self, vm_s_estimation_input):
-        """_assess_free_mem_per_node: per-node free MB after OS reserve; node 0 deducts JM for all apps."""
+    def test_throughput_cores_uncapped(self, vm_s_estimation_input):
+        """_throughput_cores: CPU scales with throughput (no per-statement cap). A complex op that needs
+        60 cores to keep up is counted as 60, not clamped."""
         input_params = _defaulting_input_params(
-            vm_s_estimation_input.model_copy(update={"nb_worker_nodes": 3})
+            vm_s_estimation_input.model_copy(
+                update={
+                    "simple_statements": 0,
+                    "medium_statements": 0,
+                    "complex_statements": 1,
+                    "avg_record_size_bytes": 2000,
+                    "expected_latency_seconds": 5.0,  # latency factor 1.0
+                    "messages_per_second": 150000,
+                }
+            )
         )
-        free_mem_per_node, total_free_mem = _assess_free_mem_per_node(input_params, 2048)
-        print(f"free_mem_per_node: {free_mem_per_node}, {total_free_mem}")
-        # first node has one job manager.
-        assert free_mem_per_node == [13824,15872,15872]
-        assert total_free_mem >= 45000
-        input_params.nb_worker_nodes = 1
-        free_mem_per_node, total_free_mem = _assess_free_mem_per_node(input_params, 2048)
-        print(f"free_mem_per_node: {free_mem_per_node}, {total_free_mem}")
-        assert free_mem_per_node == [13824]
-        assert total_free_mem >= 13824
+        thr = input_params.total_throughput_mb_per_sec  # 286.1 MB/s
+        complex_mbps = 2500 * 2000 / (1024 * 1024)  # 4.77 MB/s per core
+        cores = _throughput_cores(thr, input_params)
+        # ~60 cores for the single complex statement; the old cap would have pinned this at 4.
+        assert cores == pytest.approx(thr / complex_mbps, rel=1e-3)
+        assert cores > 50
 
-    def test_managed_memory_percent_by_latency(self):
-        """_managed_memory_percent_by_latency: 0.5s latency gets 0.32, 1.0s latency gets 0.35, 5.0s latency gets 0.38, 10.0s latency gets 0.4."""
-        assert _managed_memory_percent_by_latency(0.5) == 0.32
-        assert _managed_memory_percent_by_latency(1.0) == 0.35
-        assert _managed_memory_percent_by_latency(5.0) == 0.4
-        assert _managed_memory_percent_by_latency(10.0) == 0.4
+    def test_throughput_cores_scales_with_statements_and_apps(self, vm_s_estimation_input):
+        """Doubling statements (and applications) scales throughput cores proportionally."""
+        base = _defaulting_input_params(
+            vm_s_estimation_input.model_copy(
+                update={"simple_statements": 1, "medium_statements": 1, "complex_statements": 1,
+                        "expected_latency_seconds": 5.0, "messages_per_second": 100000, "number_flink_applications": 1}
+            )
+        )
+        thr = base.total_throughput_mb_per_sec
+        one = _throughput_cores(thr, base)
+        two_apps = base.model_copy(update={"number_flink_applications": 2})
+        assert _throughput_cores(thr, two_apps) == pytest.approx(2 * one, rel=1e-6)
 
-    def test_state_flink_process_memory_mb(self):
-        """_state_flink_process_memory_mb: 1 million keys, 1 medium statement, 1 complex statement, 1 flink application, 512 bytes record, 0.5s latency."""
+    def test_state_disk_gb(self):
+        """_state_disk_gb: state size = keys × stateful stmts × record × apps, ×1.5 RocksDB headroom."""
         input_params = EstimationInput(
-            project_name="State Flink Process Memory MB Test",
-            num_distinct_keys=1_000_000,
-            avg_record_size_bytes=512,
-            medium_statements=1,
-            complex_statements=1,
+            project_name="State disk",
+            num_distinct_keys=50_000_000,
+            avg_record_size_bytes=2000,
+            medium_statements=2,
+            complex_statements=3,
             number_flink_applications=1,
-            expected_latency_seconds=5.0,
         )
-        total_managed_memory_mb = _state_flink_process_memory_mb(input_params)
-        print(f"total_managed_memory_mb: {total_managed_memory_mb}")
-        assert total_managed_memory_mb >= 2048
+        state_gb, required_gb = _state_disk_gb(input_params)
+        expected_state = (50_000_000 * 5 * 2000 * 1) / (1024 ** 3)
+        assert state_gb == pytest.approx(expected_state, rel=1e-6)  # ~465.66 GiB
+        assert required_gb == math.ceil(expected_state * STATE_DISK_AMPLIFICATION)  # 699
+        # Stateless statements (simple only) hold no keyed state.
+        stateless = input_params.model_copy(update={"medium_statements": 0, "complex_statements": 0})
+        assert _state_disk_gb(stateless) == (0.0, 0)
 
     def test_network_buffer_min_process_memory_mb(self):
-        """_network_buffer_min_process_memory_mb: 1 million keys, 1 medium statement, 1 complex statement, 1 flink application, 512 bytes record, 0.5s latency."""
+        """_network_buffer_min_process_memory_mb: tight latency yields material per-TM buffer memory."""
         input_params = EstimationInput(
-            project_name="Network Buffer Min Process Memory MB Test",
-            num_distinct_keys=1_000_000,
+            project_name="Network Buffer Test",
             avg_record_size_bytes=512,
             medium_statements=1,
             complex_statements=1,
             simple_statements=1,
-            number_flink_applications=1,
             expected_latency_seconds=0.5,
             messages_per_second=1000,
         )
         tmbps = input_params.total_throughput_mb_per_sec
-        total_network_buffer_min_process_memory_mb = _network_buffer_min_process_memory_mb(input_params, tmbps, 1)
-        print(f"total_network_buffer_min_process_memory_mb: {total_network_buffer_min_process_memory_mb}")
-        assert total_network_buffer_min_process_memory_mb >= 200 #MB
+        assert _network_buffer_min_process_memory_mb(input_params, tmbps, 1) >= 200  # MB
 
-    def test_nb_taskmanagers_from_state_size_small_vm(self, vm_s_estimation_input):
-        """_assess_taskmanager_based_on_state: at least one TM; larger state (more keys/bytes) increases TM count and node split."""
-        # Small VM with small state too.
-        input_params = vm_s_estimation_input.model_copy(
-            update={
-                "nb_worker_nodes": 1,
-                "simple_statements": 1,
-                "num_distinct_keys": 1_000_000,  # 1 million keys
-                "avg_record_size_bytes": 512,
-                "complex_statements": 0,
-                "medium_statements": 1,  # need at least one medium or complex statement to have state
-            }
+    def test_pack_worker_nodes_ram_and_disk(self, vm_s_estimation_input):
+        """_pack_worker_nodes: node count is max(RAM pack, disk pack); reports stranding and bounding factor."""
+        input_params = _defaulting_input_params(vm_s_estimation_input)  # S: 16 GB / 512 GB disk
+        # 5 TMs of 4 GB: usable 15872 MB -> 3 TMs/node, 3584 MB stranded -> 2 nodes for TMs.
+        pack = _pack_worker_nodes(input_params, nb_taskmanagers=5, per_tm_mem_mb=4096,
+                                  jm_memory=2048, required_disk_gb=100)
+        assert pack["tms_per_node"] == 3
+        assert pack["stranded_ram_mb_per_node"] == 15872 - 3 * 4096
+        assert pack["ram_nodes"] == 2
+        assert pack["disk_nodes"] == 1  # 100 GB fits one 512 GB node
+        assert pack["worker_nodes"] == 2
+        assert pack["bounding"] == "ram"
+        # Disk-bound: huge state forces more nodes than RAM.
+        pack2 = _pack_worker_nodes(input_params, nb_taskmanagers=1, per_tm_mem_mb=4096,
+                                   jm_memory=2048, required_disk_gb=5000)
+        assert pack2["disk_nodes"] == math.ceil(5000 / 512)
+        assert pack2["worker_nodes"] == pack2["disk_nodes"]
+        assert pack2["bounding"] == "disk"
+
+    def test_resolve_per_tm_memory_floor_and_buffer(self, vm_s_estimation_input):
+        """_resolve_per_tm_memory_mb: never below configured mem_per_tm; rises with tight-latency buffers."""
+        relaxed = _defaulting_input_params(
+            vm_s_estimation_input.model_copy(update={"expected_latency_seconds": 10.0, "messages_per_second": 1000})
         )
-        jm_memory = 2048
-        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
-            input_params, jm_memory
-        )
-        print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
-        assert nb_taskmanagers == 1
-        assert node_allocations == [1]
-
-        # increase the state size to have more TMs
-        print("\n --- increase the state size to 20 million keys at 1k value size to have more TM\n")
-        input_params.num_distinct_keys=20_000_000 # 20 million keys
-        input_params.avg_record_size_bytes=1024
-        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
-            input_params, jm_memory
-        )
-        print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
-        assert nb_taskmanagers == 12
-        assert node_allocations == [3,3,3,3]
-
-
-    def test_nb_taskmanagers_from_state_size_large_vm(self):
-        """
-        Large VM, big state due to millions of keys and more flink stateful operators
-        """
-        # Large VM, state bigger than TM heap size but lot of capacity per host
-        input_params = EstimationInput(
-            project_name="VM Test",
-            worker_node_type="VM",
-            worker_node_t_size="L",
-            nb_worker_nodes=1,
-            simple_statements=1,
-            num_distinct_keys=20000000, # 20 million keys,
-            avg_record_size_bytes=1024,
-            complex_statements=1,
-            medium_statements=4,
-            number_flink_applications=1,
-            expected_latency_seconds=5.0,
-        )
-        jm_memory = 4096
-        total_memory_mb, nb_taskmanagers, node_allocations, _raw = _assess_taskmanager_based_on_state(
-            input_params, jm_memory
-        )
-        print(f"nb_taskmanagers: {total_memory_mb} {nb_taskmanagers}, {node_allocations}")
-        # Large state + 4 medium + 1 complex yields 60 TMs; placement may be [18,21,21] or [20,20,20]
-        assert nb_taskmanagers == 60
-        assert node_allocations in [[18,21,21],[20,20,20]]
- 
-
-    def test_greedy_pack_taskmanagers_invariants(self):
-        """Greedy pack: one count per node, total TMs placed, per-node headroom."""
-        # Same shape as S VM: JM on node 0.
-        free_mem = [13824, 15872, 15872]
-        nb_tm = 2
-        alloc, mx, ok, remaining = _greedy_pack_taskmanagers(free_mem, nb_tm, TM_MEM_MB)
-        print(f"out_of_mem: {alloc}, {mx}, {ok}, {remaining}")
-        assert ok
-        assert len(alloc) == 3
-        assert sum(alloc) == nb_tm
-        assert mx == 1
-        for i, c in enumerate(alloc):
-            assert c * TM_MEM_MB <= free_mem[i]
-        out_of_mem, _mx, nok, remaining = _greedy_pack_taskmanagers(
-            [100, 100, 100], 1, TM_MEM_MB
-        )
-        
-        assert nok is False
-        assert sum(out_of_mem) < 1
-
-
-    def test_cpu_need_for_throughput(self, vm_s_estimation_input):
-        """_assess_taskmanager_based_on_throughput: fixed throughput; then add a medium op; then widen VM to M (more cores per node)."""
-        input_params = _defaulting_input_params(
-            vm_s_estimation_input.model_copy(
-                update={
-                    "simple_statements": 1,
-                    "medium_statements": 0,
-                    "complex_statements": 0,
-                    "avg_record_size_bytes": 1024,
-                    "num_distinct_keys": 1000,
-                    "data_skew_risk": "low",
-                    "bandwidth_capacity_gbps": 10,  # 10 Gbps
-                    "expected_latency_seconds": 5.0,
-                    "number_flink_applications": 1,
-                    "messages_per_second": 500_000,
-                }
-            )
-        )
-        total_throughput_mb_per_sec = input_params.messages_per_second * input_params.avg_record_size_bytes / (1024 * 1024)
-        nb_taskmanagers, cpu_total, nb_worker_nodes = _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params, 1)
-        print(f"\ntest_cpu_need_for_throughput: {total_throughput_mb_per_sec} MBps is cpu:{cpu_total} wn:{nb_worker_nodes} tm:{nb_taskmanagers}")
-        assert cpu_total >= 5
-        assert nb_worker_nodes == 1
-        assert nb_taskmanagers == 1
-        input_params.medium_statements = 1
-        nb_taskmanagers, cpu_total, nb_worker_nodes = _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params, 1)
-        print(f"test_cpu_need_for_throughput: {total_throughput_mb_per_sec} MBps is cpu:{cpu_total} wn:{nb_worker_nodes} tm:{nb_taskmanagers}")
-        assert cpu_total >= 9
-        assert nb_worker_nodes == 2
-        assert nb_taskmanagers == 2
-        input_params.worker_node_t_size = 'M'
-        nb_taskmanagers, cpu_total, nb_worker_nodes = _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params, 1)
-        print(f"test_cpu_need_for_throughput: {total_throughput_mb_per_sec} MBps is cpu:{cpu_total} wn:{nb_worker_nodes} tm:{nb_taskmanagers}")
-        assert cpu_total >= 9
-        assert nb_worker_nodes == 1
-        assert nb_taskmanagers == 2
-
+        assert _resolve_per_tm_memory_mb(relaxed, relaxed.total_throughput_mb_per_sec, 1) == TM_MEM_MB
 
 
 class TestBasicEstimation:
-    """End-to-end calculate_flink_estimation: VM-integrated and custom worker shapes (memory/CPU) as noted per test."""
+    """End-to-end calculate_flink_estimation: primary CP Flink node count and secondary VM packing."""
+
+    def _assert_consistent(self, result):
+        """Invariants that must hold for every estimate."""
+        re = result.resource_estimates
+        assert re.cp_flink_nodes == max(1, math.ceil(re.total_cpus / CP_FLINK_NODE_CORES))
+        assert re.total_cpus >= 1
+        assert re.total_worker_node_needed >= 1
+        # TM cores + aggregate JM cores (per-JM × count) reconcile with the reported total.
+        cc = result.cluster_recommendations
+        jm_aggregate = cc.jobmanager.count * math.ceil(cc.jobmanager.total_cpus)
+        assert re.total_cpus == cc.taskmanagers.total_cpus + jm_aggregate
 
     def test_default_settings_estimation(self, vm_s_estimation_input):
-        """VM S with fixture-only input: single TM+JM, totals and per-component numbers."""
+        """VM S defaults: low throughput, tiny state. 1 CP Flink node, packs onto a single VM."""
         result = calculate_flink_estimation(vm_s_estimation_input)
-        print(result.model_dump_json(indent=2))
-        assert result.cluster_recommendations.taskmanagers.count == 1
-        assert result.cluster_recommendations.taskmanagers.total_memory_mb == 4096
-        assert result.cluster_recommendations.taskmanagers.total_cpus == 3
-        assert result.cluster_recommendations.taskmanagers.memory_mb_each == 4096
-        assert result.cluster_recommendations.jobmanager.count == 1
-        assert result.resource_estimates.total_memory_mb == 6144
-        assert result.resource_estimates.total_cpus == 4
-        assert result.resource_estimates.total_worker_node_needed == 1
-       
+        self._assert_consistent(result)
+        re = result.resource_estimates
+        # throughput ~2.87 cores + 1 JM core -> 4 total -> 1 CP Flink node
+        assert re.cp_flink_nodes == 1
+        assert re.total_cpus == 4
+        assert re.total_worker_node_needed == 1
+        assert re.total_disk_gb >= 1  # 100k keys × 2 stateful × 512 B ~ 0.1 GiB -> 1 GB
+        tm = result.cluster_recommendations.taskmanagers
+        assert tm.memory_mb_each == 4096
+        assert tm.count == math.ceil(result.sizing_diagnostics.tm_cores)
+
     def test_minimal_workload(self, vm_s_estimation_input):
-        """VM S: 5000 msg/s, 512-byte records, one simple op; 10M keys, stateless medium/complex (0+0)."""
+        """VM S: 5000 msg/s, one stateless simple op, 10M keys -> tiny footprint, single node."""
         input_params = vm_s_estimation_input.model_copy(
             update={
                 "project_name": "Minimal Test",
                 "messages_per_second": 5000,
                 "avg_record_size_bytes": 512,
-                "num_distinct_keys": 10_000_000,  # 10 million keys
-                "data_skew_risk": "low",
-                "bandwidth_capacity_gbps": 10,  # 10 Gbps
+                "num_distinct_keys": 10_000_000,
                 "expected_latency_seconds": 5.0,
-                "simple_statements": 1,  # stateless filtering
-                "medium_statements": 0,  # deduplication, group by aggregation
-                "complex_statements": 0,  # full left join
+                "simple_statements": 1,
+                "medium_statements": 0,
+                "complex_statements": 0,
             }
         )
         result = calculate_flink_estimation(input_params)
-        print(result.model_dump_json(indent=2))
-        # Verify basic structure
+        self._assert_consistent(result)
         assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(2.44, rel=1e-1)
-        assert result.input_summary.worker_node_memory_capacity_mb == pytest.approx(16384, rel=1e-2)
         assert result.input_summary.worker_node_cpu_capacity == 8
-
-        # Check resource estimates are reasonable for minimal load
-        assert result.resource_estimates.total_memory_mb >= 6144  # JM + TM aggregate
-        assert result.resource_estimates.total_cpus >= 4  # JM + workload CPUs
+        # Stateless: no keyed state -> no disk.
+        assert result.resource_estimates.total_disk_gb == 0
+        assert result.resource_estimates.cp_flink_nodes == 1
         assert result.resource_estimates.total_worker_node_needed == 1
-
-        # One TM fits this throughput on VM S; TM CPU bundle matches workload ceiling
-        assert result.cluster_recommendations.taskmanagers.count == 1
-        assert result.cluster_recommendations.taskmanagers.total_cpus == 3
         assert result.cluster_recommendations.jobmanager.total_cpus == 1
 
-    def test_simple_workload(self):
-        """VM S, 10k msg/s, 1+1+1 statements, 10M keys: state and CPU both drive 12+ TMs (matches medium-work scale)."""
-        # VM S: place many 4096 MB TMs across workers when state requires it
+    def test_complex_throughput_drives_cores_not_state(self):
+        """The headline regression: 150k msg/s, 1+2+3 stmts, 50M keys, 60s latency on VM M.
+        CPU is throughput-driven (~216 cores -> 27 CP Flink nodes); state is ~700 GB of disk that
+        fits the VM-node memory packing. No state-inflated CPU."""
         input_params = EstimationInput(
-            project_name="Simple_Workload Test",
-            messages_per_second=10000,
-            avg_record_size_bytes=1024,
-            num_distinct_keys=10_000_000,
-            data_skew_risk="low",
-            bandwidth_capacity_gbps= 10,  # very high Gbps value (estimator field; not the limiter here)
-            expected_latency_seconds=5.0,
-            worker_node_type="VM",
-            worker_node_t_size="S",
-            simple_statements=1,   # stateless filtering
-            medium_statements=1,   # deduplication, group by aggregation
-            complex_statements=1,   # full left join
-        )
-        input_params = _defaulting_input_params(input_params)
-        
-        result = calculate_flink_estimation(input_params)
-        print(result.model_dump_json(indent=2))
-        # Verify basic structure
-        assert result.input_summary.total_statements == 3
-        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(9.77, rel=1e-1)
-        
-        # Check resource estimates are reasonable for a multi-statement workload
-        assert result.resource_estimates.total_memory_mb >= 50800
-        assert result.resource_estimates.total_cpus >= 45
-        # NOT USED YETassert result.resource_estimates.processing_load_score == pytest.approx(0.35, rel=1e-1)
-        
-        # TM count follows memory and CPU; multiple TMs are valid when total_cpu is split across TMs
-        assert result.cluster_recommendations.taskmanagers.count >= 12
-        assert result.cluster_recommendations.jobmanager.total_cpus == pytest.approx(1, rel=1e-1)
-        assert result.cluster_recommendations.taskmanagers.total_cpus == pytest.approx(47, rel=1e-1)
-
-    
-    def test_medium_work_nodes_with_simple_app(self):
-        """VM M: 10k msg/s, 1k records, 10M keys, 1+1+1 statements; state drives TM count and totals."""
-        input_params = EstimationInput(
-            project_name="Medium Work Nodes Test",
-            messages_per_second=10000,
-            avg_record_size_bytes=1024,
-            num_distinct_keys=10_000_000,
-            simple_statements=1,
-            medium_statements=1,
-            complex_statements=1,
+            project_name="EOD payment reconciliation",
+            messages_per_second=150000,
+            avg_record_size_bytes=2000,
             number_flink_applications=1,
-            expected_latency_seconds=5.0,
+            simple_statements=1,
+            medium_statements=2,
+            complex_statements=3,
+            num_distinct_keys=50_000_000,
+            data_skew_risk="medium",
+            expected_latency_seconds=60,
+            bandwidth_capacity_gbps=10,
             worker_node_type="VM",
             worker_node_t_size="M",
-            bandwidth_capacity_gbps= 10,  # 10 Gbps
         )
-        input_params = _defaulting_input_params(input_params)
         result = calculate_flink_estimation(input_params)
-        print(result.model_dump_json(indent=2))
-        # Verify basic structure
-        assert result.input_summary.total_statements == 3
-        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(9.77, rel=1e-1)
-        # State (10M keys × 2 stateful op types) drives 12 TMs; JM S tier at 1×2048 MB
-        assert result.resource_estimates.total_memory_mb == pytest.approx(51200, rel=1e-2)
-        assert result.resource_estimates.total_cpus == 48
-        assert result.cluster_recommendations.jobmanager.count == 1
-        assert result.cluster_recommendations.jobmanager.memory_mb == 2048
-        assert result.cluster_recommendations.jobmanager.total_cpus == 1
-        assert result.cluster_recommendations.taskmanagers.count == 12
-        assert result.cluster_recommendations.taskmanagers.total_memory_mb == 49152
-        assert result.cluster_recommendations.taskmanagers.total_cpus == 47
-    
-    
-    
-    def test_moderate_workload(self):
-        """Bare_metal-style workers (64GB / 8 CPU), 1.0s latency, 3+10+10 statements, 10M keys — heavy state and CPU."""
-        input_params = EstimationInput(
-            project_name="Moderate Test",
-            messages_per_second=5000,
-            avg_record_size_bytes=1024,
-            expected_latency_seconds=1.0,
-            num_distinct_keys=10_000_000,
-            data_skew_risk="low",
-            worker_node_memory_mb=65536,
-            worker_node_cpu_max=8,
-            bandwidth_capacity_gbps= 100, # 100 Gbps
-            simple_statements=3,
-            medium_statements=10,
-            complex_statements=10,
-            number_flink_applications=1,
-        )
-        input_params = _defaulting_input_params(input_params)
-        result = calculate_flink_estimation(input_params)
-        print(result.model_dump_json(indent=2))
-        # Verify calculations
-        assert result.input_summary.total_statements == 23
-        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(4.88, rel=1e-2)
-        
-        # Check moderate workload resources
-        assert result.resource_estimates.total_memory_mb > 190000 # 190GB
-        assert result.resource_estimates.total_cpus >=28
-        assert result.resource_estimates.total_worker_node_needed >= 3
-        # Processing load: (3*0.25 + 2*1.0 + 1*1.2) * key_factor(1M keys) = 3.95 * 1.6 = 6.32
-        # NOT USED YET assert result.resource_estimates.processing_load_score == pytest.approx(6.32, rel=1e-1)
-        
-        # TaskManager scaling
-        assert result.cluster_recommendations.taskmanagers.count >= 26
-        assert result.cluster_recommendations.taskmanagers.total_memory_mb >= 16384*26
-        assert result.cluster_recommendations.taskmanagers.total_cpus >= 26*8
+        self._assert_consistent(result)
+        re = result.resource_estimates
+        diag = result.sizing_diagnostics
+        assert diag.tm_cores == pytest.approx(213.52, rel=1e-2)
+        assert re.total_cpus == 216  # 214 TM + 2 JM
+        assert re.cp_flink_nodes == 27  # ceil(216 / 8)
+        assert re.total_disk_gb == 699  # 465.66 GiB × 1.5
+        assert diag.worker_node_bounding_factor == "ram"
+        # The old model reported 1168 CPUs against 20 nodes; the new model never inflates CPU by state.
+        assert re.total_cpus < 300
 
-        
-    def test_high_volume_workload(self):
-        """High message rate, 100 statements, 10M keys on fixed 64GB / 8-CPU per worker (bare_metal fields, not VM t-shirt)."""
+    def test_high_application_count_folds_jm_into_cores(self):
+        """Many applications: each app's JobManager cores count toward the CP Flink node total."""
         input_params = EstimationInput(
-            project_name="High Volume Test",
+            project_name="Many apps",
             messages_per_second=50000,
             avg_record_size_bytes=2048,
-            worker_node_memory_mb=65536,
             num_distinct_keys=10_000_000,
-            data_skew_risk="low",
-            worker_node_cpu_max=8,
             simple_statements=5,
             medium_statements=3,
             complex_statements=2,
-            number_flink_applications=10
+            number_flink_applications=10,
+            worker_node_type="VM",
+            worker_node_t_size="M",
         )
-        input_params = _defaulting_input_params(input_params)
         result = calculate_flink_estimation(input_params)
-        print(result.model_dump_json(indent=2))
-        # Verify high throughput calculations
-        assert result.input_summary.total_statements == 100
-        assert result.input_summary.total_throughput_mb_per_sec == pytest.approx(97.66, rel=1e-2)
-        
-        # High volume should require significant resources
-        assert result.resource_estimates.total_memory_mb > 190000 # 190GB
-        assert result.resource_estimates.total_cpus >= 27
-        assert result.resource_estimates.total_worker_node_needed >= 7
-        
-        # At least two TMs when CPU or memory requires it (memory may pack into fewer than before)
-        assert result.cluster_recommendations.taskmanagers.count >= 2
-        
+        self._assert_consistent(result)
+        # 10 apps × JM(S tier =1 core) = 10 JM cores folded in.
+        assert result.sizing_diagnostics.jm_cores == 10
+        assert result.cluster_recommendations.jobmanager.count == 10
+
+    def test_disk_bound_large_state(self):
+        """Huge state, modest throughput: worker-node count is driven by local disk, not RAM."""
+        input_params = EstimationInput(
+            project_name="Disk bound",
+            messages_per_second=2000,
+            avg_record_size_bytes=4096,
+            num_distinct_keys=200_000_000,
+            simple_statements=0,
+            medium_statements=2,
+            complex_statements=2,
+            number_flink_applications=1,
+            worker_node_type="VM",
+            worker_node_t_size="M",
+        )
+        result = calculate_flink_estimation(input_params)
+        self._assert_consistent(result)
+        diag = result.sizing_diagnostics
+        assert diag.required_disk_gb > 0
+        assert diag.disk_nodes > diag.ram_nodes
+        assert diag.worker_node_bounding_factor == "disk"
+        assert result.resource_estimates.total_worker_node_needed == diag.disk_nodes
+
 
 if __name__ == "__main__":
     pytest.main()

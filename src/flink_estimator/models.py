@@ -8,12 +8,13 @@ estimation results, and file persistence.
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
 
-# When worker_node_type is VM, memory and CPU are derived from worker_node_t_size (MB / cores).
+# When worker_node_type is VM, memory / CPU / local NVMe disk are derived from worker_node_t_size.
+# Tuple order: (memory_mb, cpu_cores, local_disk_gb). Local disk is node-local NVMe for RocksDB state.
 VM_TSHIRT_MB_CPU = {
-    # memory, cpu
-    "S": (16384, 8),
-    "M": (65536, 16),
-    "L": (96448, 48),
+    # memory_mb, cpu_cores, local_disk_gb
+    "S": (16384, 8, 512),
+    "M": (65536, 16, 2048),
+    "L": (96448, 48, 6144),
 }
 
 class EstimationInput(BaseModel):
@@ -44,6 +45,21 @@ class EstimationInput(BaseModel):
         le=256,
         description="Maximum CPU cores per worker node / TaskManager (instance shape limit)",
     )
+    worker_node_disk_gb: int = Field(
+        default=VM_TSHIRT_MB_CPU["S"][2],
+        gt=0,
+        description="Local NVMe disk per worker node (GB) for RocksDB state; VM type overwrites from T-shirt",
+    )
+    cores_per_tm: float = Field(
+        default=1.0,
+        gt=0,
+        description="CPU cores allocated per TaskManager (TM shape; fractional allowed)",
+    )
+    mem_per_tm_mb: int = Field(
+        default=4096,
+        gt=0,
+        description="Process memory per TaskManager (MB); should evenly divide usable node RAM to avoid stranding",
+    )
     nb_worker_nodes: int = Field(
         default=1,  # Even if for HA we need 3, starts with 1 so we can use the tool to size dev environments
         ge=1,
@@ -70,9 +86,10 @@ class EstimationInput(BaseModel):
             return self
         if self.worker_node_t_size is None:
             raise ValueError("worker_node_t_size is required when worker_node_type is VM")
-        mem_mb, cpus = VM_TSHIRT_MB_CPU[self.worker_node_t_size]
+        mem_mb, cpus, disk_gb = VM_TSHIRT_MB_CPU[self.worker_node_t_size]
         self.worker_node_memory_mb = mem_mb
         self.worker_node_cpu_max = cpus
+        self.worker_node_disk_gb = disk_gb
         return self
 
     @property
@@ -82,6 +99,17 @@ class EstimationInput(BaseModel):
     @property
     def total_throughput_mb_per_sec(self) -> float:
         return (self.messages_per_second * self.avg_record_size_bytes) / (1024 * 1024)
+
+    @property
+    def state_size_bytes(self) -> int:
+        """Total keyed state held across stateful (medium + complex) statements and applications.
+        Under the RocksDB backend this is an on-disk (local NVMe) requirement, not RAM."""
+        return (
+            self.num_distinct_keys
+            * (self.medium_statements + self.complex_statements)
+            * self.avg_record_size_bytes
+            * self.number_flink_applications
+        )
 
 
 class InputSummary(BaseModel):
@@ -104,10 +132,17 @@ class InputSummary(BaseModel):
 
 
 class ResourceEstimates(BaseModel):
-    """Estimated resource requirements"""
+    """Estimated resource requirements.
+
+    Primary buy unit is ``cp_flink_nodes`` (8 cores each, derived from aggregate CPUs of all
+    CP Flink workloads — TaskManagers + JobManagers). ``total_worker_node_needed`` is a secondary,
+    VM-shape-dependent bin-packing metric bounded by RAM and local disk only.
+    """
+    cp_flink_nodes: int = Field(..., description="PRIMARY: ⌈total CPUs / 8⌉; a CP Flink node is 8 cores")
+    total_cpus: int = Field(..., description="Aggregate CPU cores (TaskManagers + JobManagers)")
     total_memory_mb: int
-    total_cpus: int
-    total_worker_node_needed: int
+    total_disk_gb: int = Field(..., description="Local NVMe disk for RocksDB state incl. compaction headroom")
+    total_worker_node_needed: int = Field(..., description="SECONDARY: VM nodes to bin-pack RAM and disk")
     processing_load_score: float
 
 
@@ -138,20 +173,25 @@ class CapacityAnalysis(BaseModel):
 
 
 class SizingDiagnostics(BaseModel):
-    """Intermediate sizing values and which constraint drives TaskManager count, CPU, and per-TM memory."""
-    nb_tm_state: int = Field(..., description="TaskManager count from state/memory pass at 4096 MB per TM")
-    nb_tm_cpu: int = Field(..., description="TaskManager count from throughput/CPU pass")
-    raw_flink_process_mb: float = Field(..., description="Aggregate Flink process memory from managed state heuristic")
-    tm_process_memory_mb: int = Field(..., description="Resolved per-TaskManager process memory (MB)")
-    buffer_mb: int = Field(..., description="Network/in-flight buffer heuristic per TM (MB)")
-    tm_count_bounding_factor: Literal["cpu", "memory", "balanced"] = Field(
-        ..., description="Whether TM count is driven by throughput CPU vs state at resolved memory"
-    )
-    total_cpu_bounding_factor: Literal["throughput", "tm_slots"] = Field(
-        ..., description="Whether total CPUs follow statement throughput vs TM count × slots"
-    )
-    per_tm_memory_bounding_factor: Literal["state", "buffers", "baseline"] = Field(
-        ..., description="Dominant term in per-TM process memory sizing"
+    """Intermediate sizing values and which resource bounds the secondary worker-node count.
+
+    CPU drives the primary CP Flink node count; RAM and local disk independently drive the
+    secondary VM/worker-node bin-packing. ``worker_node_bounding_factor`` says which of RAM or
+    disk forced the worker-node count.
+    """
+    tm_cores: float = Field(..., description="Cores for TaskManager throughput work (uncapped, fractional)")
+    jm_cores: float = Field(..., description="Cores for JobManagers (jm_cpu × applications)")
+    nb_taskmanagers: int = Field(..., description="⌈tm_cores / cores_per_tm⌉")
+    mem_per_tm_mb: int = Field(..., description="Process memory per TaskManager (MB)")
+    ram_total_mb: int = Field(..., description="Aggregate TaskManager process memory incl. buffer headroom (MB)")
+    state_size_gb: float = Field(..., description="Total keyed state size (GB) before RocksDB headroom")
+    required_disk_gb: int = Field(..., description="state_size × amplification (GB) bin-packed onto local NVMe")
+    tms_per_node: int = Field(..., description="TaskManagers that fit per worker node by usable RAM")
+    stranded_ram_mb_per_node: int = Field(..., description="Usable RAM left over per node when mem_per_tm does not evenly divide it")
+    ram_nodes: int = Field(..., description="Worker nodes required to hold aggregate RAM")
+    disk_nodes: int = Field(..., description="Worker nodes required to hold required_disk_gb")
+    worker_node_bounding_factor: Literal["ram", "disk", "balanced"] = Field(
+        ..., description="Whether RAM or local disk drives the worker-node count"
     )
 
 
