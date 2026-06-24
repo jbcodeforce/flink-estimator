@@ -71,28 +71,28 @@
                     <option value="M" {% if ts == 'M' %}selected{% endif %}>M</option>
                     <option value="L" {% if ts == 'L' %}selected{% endif %}>L</option>
                 </select>
-                <div class="help-text">Required when worker node type is VM. Sizes: <strong>S</strong> 16&nbsp;GB / 8&nbsp;vCPU · <strong>M</strong> 64&nbsp;GB / 16&nbsp;vCPU · <strong>L</strong> 96&nbsp;GB / 48&nbsp;vCPU.</div>
+                <div class="help-text">Required when worker node type is VM. Sizes: <strong>S</strong> 16&nbsp;GB / 8&nbsp;vCPU / 512&nbsp;GB · <strong>M</strong> 64&nbsp;GB / 16&nbsp;vCPU / 2&nbsp;TB · <strong>L</strong> 96&nbsp;GB / 48&nbsp;vCPU / 6&nbsp;TB (memory&nbsp;/&nbsp;cores&nbsp;/&nbsp;local&nbsp;NVMe).</div>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="worker-node-memory-group">
                 <label for="worker_node_memory_gb">Target memory per worker for sizing (GB):</label>
                 <input type="number" id="worker_node_memory_gb" name="worker_node_memory_gb"
                      min=".5" step="any" required
                      value="{{ p.get('worker_node_memory_gb', 2.0) }}" placeholder="2.0">
-                <div class="help-text">For <strong>VM</strong>, set automatically from T‑shirt size.</div>
+                <div class="help-text">Used only for <strong>bare metal</strong>. For <strong>VM</strong> this is set from the T‑shirt size and disabled.</div>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="worker-node-cpu-group">
                 <label for="worker_node_cpu_max">Max CPU cores per worker (cores):</label>
                 <input type="number" id="worker_node_cpu_max" name="worker_node_cpu_max"
                     required min="2" max="256" step="1"
                     value="{{ p.get('worker_node_cpu_max', 8) }}" placeholder="8">
-                <div class="help-text">For <strong>VM</strong>, set automatically from T‑shirt size.</div>
+                <div class="help-text">Used only for <strong>bare metal</strong>. For <strong>VM</strong> this is set from the T‑shirt size and disabled.</div>
             </div>
-            <div class="form-group">
+            <div class="form-group" id="worker-node-disk-group">
                 <label for="worker_node_disk_gb">Local NVMe disk per worker (GB):</label>
                 <input type="number" id="worker_node_disk_gb" name="worker_node_disk_gb"
                     required min="1" step="1"
                     value="{{ p.get('worker_node_disk_gb', 512) }}" placeholder="512">
-                <div class="help-text">Node-local SSD for RocksDB state. For <strong>VM</strong>, set automatically from T‑shirt size.</div>
+                <div class="help-text">Node-local SSD that holds RocksDB state. Used only for <strong>bare metal</strong>; for <strong>VM</strong> it is set from the T‑shirt size and disabled.</div>
             </div>
         </div>
         <div class="form-section">
@@ -279,19 +279,26 @@
 
 {% block scripts %}
 <script>
-    var VM_TSHIRT_SKU = { S: { gb: 16, cpu: 8 }, M: { gb: 64, cpu: 16 }, L: { gb: 96, cpu: 48 } };
+    // memory GB / cores / local NVMe GB per VM T-shirt (mirrors VM_TSHIRT_MB_CPU in models.py)
+    var VM_TSHIRT_SKU = {
+        S: { gb: 16, cpu: 8, disk: 512 },
+        M: { gb: 64, cpu: 16, disk: 2048 },
+        L: { gb: 96, cpu: 48, disk: 6144 },
+    };
 
     function applyVmTshirtSku() {
         var typeEl = document.getElementById('worker_node_type');
         var tsEl = document.getElementById('worker_node_t_size');
         var memEl = document.getElementById('worker_node_memory_gb');
         var cpuEl = document.getElementById('worker_node_cpu_max');
-        if (!typeEl || !memEl || !cpuEl) return;
+        var diskEl = document.getElementById('worker_node_disk_gb');
+        if (!typeEl || !memEl || !cpuEl || !diskEl) return;
         if (typeEl.value !== 'VM' || !tsEl || !tsEl.value) return;
         var sku = VM_TSHIRT_SKU[tsEl.value];
         if (!sku) return;
         memEl.value = sku.gb;
         cpuEl.value = sku.cpu;
+        diskEl.value = sku.disk;
     }
 
     function syncWorkerNodeTypeUI() {
@@ -309,7 +316,23 @@
         if (tsGroup) {
             tsGroup.style.opacity = isVm ? '1' : '0.65';
         }
+        // For VM, memory/cores/disk come from the T-shirt: fill them, then disable so they are
+        // read-only (disabled inputs are not submitted; the server derives them from the t-shirt).
         applyVmTshirtSku();
+        [
+            'worker-node-memory-group',
+            'worker-node-cpu-group',
+            'worker-node-disk-group',
+        ].forEach(function (groupId) {
+            const group = document.getElementById(groupId);
+            if (!group) return;
+            const field = group.querySelector('input');
+            if (field) {
+                field.disabled = !!isVm;
+                field.required = !isVm;
+            }
+            group.style.opacity = isVm ? '0.65' : '1';
+        });
     }
 
     // Tab functionality
