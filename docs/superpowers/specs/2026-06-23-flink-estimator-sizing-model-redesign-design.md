@@ -81,6 +81,10 @@ worker_nodes   = ⌈ max( ram_total / ram_per_node, required_disk / disk_per_nod
 - **CPU** is throughput-only **plus JM cores** — both TaskManagers and JobManagers run CP Flink workloads, so both count toward `total_cores` and the CP Flink node total. State does **not** add cores.
 - **State → local NVMe disk** (rocksdb assumed; hashmap deferred). RAM is the small working-set/buffer figure, not grossed-up state.
 - **CP Flink node count is VM-shape-independent**; VM/worker node count is shape-dependent packing only.
+- **`provisioned_cores` = worker_nodes × cores_per_node** is reported alongside, exposing the gap between
+  compute demand (`total_cpus`) and the cores physically dragged in when a RAM/disk-light shape forces
+  extra nodes (e.g. an S fleet provisions 576 cores for a 216-core workload). It is informational and
+  does not change the shape-independent `cp_flink_nodes`.
 
 ### TM shape
 
@@ -103,7 +107,7 @@ Local NVMe SSD added to VM t-shirts; `worker_node_disk_gb` override for custom/b
 | # | File / location | Change |
 |---|---|---|
 | 1 | `estimation.py:635-641` | **Done.** Remove `min(TM_vCPUs, …)` cap; throughput CPU = `Σ(throughput/rate × stmts)`. |
-| 2 | `estimation.py` + `models.py` | Add `CP_FLINK_NODE_CORES = 8`; new `ResourceEstimates.cp_flink_nodes = ⌈total_cores/8⌉` as primary output. |
+| 2 | `estimation.py` + `models.py` | Add `CP_FLINK_NODE_CORES = 8`; new `ResourceEstimates.cp_flink_nodes = ⌈total_cores/8⌉` as primary output; add derived `provisioned_cores = worker_nodes × cores_per_node`. |
 | 3 | `estimation.py:141-160` | Replace `_state_flink_process_memory_mb` (RAM gross-up) with `_state_disk_gb` = `state_size × 1.5`; drop the `÷pct` path for state. |
 | 4 | `models.py:12-17` | Extend `VM_TSHIRT_MB_CPU` with disk GB (512/2048/6144); add `worker_node_disk_gb` field. |
 | 5 | `estimation.py` | RAM per TM = baseline + network/buffer heuristic only (no state). `nb_taskmanagers = ⌈total_cores/CORES_PER_TM⌉`. |

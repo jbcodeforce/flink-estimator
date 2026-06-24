@@ -139,7 +139,12 @@ class ResourceEstimates(BaseModel):
     VM-shape-dependent bin-packing metric bounded by RAM and local disk only.
     """
     cp_flink_nodes: int = Field(..., description="PRIMARY: ⌈total CPUs / 8⌉; a CP Flink node is 8 cores")
-    total_cpus: int = Field(..., description="Aggregate CPU cores (TaskManagers + JobManagers)")
+    total_cpus: int = Field(..., description="Aggregate CPU cores the workload needs (TaskManagers + JobManagers)")
+    provisioned_cores: int = Field(
+        ...,
+        description="Cores physically provisioned = worker nodes × cores per node. Exceeds total_cpus "
+        "when a RAM/disk-constrained node shape forces more nodes than the compute need.",
+    )
     total_memory_mb: int
     total_disk_gb: int = Field(..., description="Local NVMe disk for RocksDB state incl. compaction headroom")
     total_worker_node_needed: int = Field(..., description="SECONDARY: VM nodes to bin-pack RAM and disk")

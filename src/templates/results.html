@@ -87,6 +87,15 @@
                     <div class="resource-value">{{ estimation.resource_estimates.total_worker_node_needed }}</div>
                     <div class="resource-subtext">Secondary — RAM/disk bin-packing</div>
                 </div>
+                <div class="resource-card">
+                    <h3>Provisioned Cores</h3>
+                    <div class="resource-value">{{ estimation.resource_estimates.provisioned_cores }}</div>
+                    {% if estimation.resource_estimates.provisioned_cores > estimation.resource_estimates.total_cpus %}
+                    <div class="resource-subtext">Nodes × cores/node — {{ estimation.resource_estimates.provisioned_cores - estimation.resource_estimates.total_cpus }} cores beyond the {{ estimation.resource_estimates.total_cpus }} the workload needs (RAM/disk packing drives node count)</div>
+                    {% else %}
+                    <div class="resource-subtext">Nodes × cores/node — matches the compute need</div>
+                    {% endif %}
+                </div>
             </div>
         </div>
 

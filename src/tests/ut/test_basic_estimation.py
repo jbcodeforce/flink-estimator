@@ -196,6 +196,9 @@ class TestBasicEstimation:
         cc = result.cluster_recommendations
         jm_aggregate = cc.jobmanager.count * math.ceil(cc.jobmanager.total_cpus)
         assert re.total_cpus == cc.taskmanagers.total_cpus + jm_aggregate
+        # Provisioned cores = worker nodes × cores/node; never below the compute need.
+        assert re.provisioned_cores == re.total_worker_node_needed * result.input_summary.worker_node_cpu_capacity
+        assert re.provisioned_cores >= re.total_cpus
 
     def test_default_settings_estimation(self, vm_s_estimation_input):
         """VM S defaults: low throughput, tiny state. 1 CP Flink node, packs onto a single VM."""
@@ -265,6 +268,25 @@ class TestBasicEstimation:
         assert diag.worker_node_bounding_factor == "ram"
         # The old model reported 1168 CPUs against 20 nodes; the new model never inflates CPU by state.
         assert re.total_cpus < 300
+
+    def test_cp_flink_nodes_invariant_provisioned_cores_shape_dependent(self):
+        """cp_flink_nodes (compute demand) is the same on S and M; provisioned_cores reveals that a
+        RAM-light S fleet drags along far more cores than the workload needs."""
+        base = dict(
+            project_name="Shape compare", messages_per_second=150000, avg_record_size_bytes=2000,
+            simple_statements=1, medium_statements=2, complex_statements=3,
+            num_distinct_keys=50_000_000, expected_latency_seconds=60, number_flink_applications=1,
+        )
+        s = calculate_flink_estimation(EstimationInput(**base, worker_node_type="VM", worker_node_t_size="S"))
+        m = calculate_flink_estimation(EstimationInput(**base, worker_node_type="VM", worker_node_t_size="M"))
+        self._assert_consistent(s)
+        self._assert_consistent(m)
+        # Compute demand is shape-independent.
+        assert s.resource_estimates.cp_flink_nodes == m.resource_estimates.cp_flink_nodes
+        assert s.resource_estimates.total_cpus == m.resource_estimates.total_cpus
+        # RAM-light S forces more nodes -> more provisioned cores than the richer M shape.
+        assert s.resource_estimates.provisioned_cores > m.resource_estimates.provisioned_cores
+        assert s.resource_estimates.provisioned_cores > s.resource_estimates.total_cpus
 
     def test_high_application_count_folds_jm_into_cores(self):
         """Many applications: each app's JobManager cores count toward the CP Flink node total."""

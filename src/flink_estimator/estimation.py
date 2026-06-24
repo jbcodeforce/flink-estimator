@@ -352,9 +352,13 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
     # Placeholder until processing_load is fully wired; matches scaling checkpoint heuristic seed.
     processing_load_score = 1.0
+    # Cores that physically come with the worker nodes provisioned for RAM/disk. Equals the compute
+    # need on a balanced shape, but exceeds it when a RAM/disk-light shape forces extra nodes.
+    provisioned_cores = packing["worker_nodes"] * int(input_params.worker_node_cpu_max)
     resource_estimates = ResourceEstimates(
         cp_flink_nodes=cp_flink_nodes,
         total_cpus=math.ceil(total_cores),
+        provisioned_cores=provisioned_cores,
         total_memory_mb=int(packing["ram_total_mb"]),
         total_disk_gb=required_disk_gb,
         total_worker_node_needed=packing["worker_nodes"],
