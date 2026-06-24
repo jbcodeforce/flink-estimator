@@ -242,6 +242,8 @@ async def api_estimate(
     worker_node_memory_gb: float = 2.0,
     worker_node_cpu_max: int = 8,
     worker_node_disk_gb: int = 512,
+    cores_per_tm: float = 1.0,
+    mem_per_tm_mb: int = 4096,
     nb_worker_nodes: int = 3,
     worker_node_type: str = "bare_metal",
     worker_node_t_size: Optional[str] = None,
@@ -264,6 +266,8 @@ async def api_estimate(
             worker_node_memory_mb=worker_node_memory_mb,
             worker_node_cpu_max=worker_node_cpu_max,
             worker_node_disk_gb=worker_node_disk_gb,
+            cores_per_tm=cores_per_tm,
+            mem_per_tm_mb=mem_per_tm_mb,
             nb_worker_nodes=nb_worker_nodes,
             worker_node_type=worker_node_type,  # type: ignore[arg-type]
             worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
