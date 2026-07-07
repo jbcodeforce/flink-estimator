@@ -9,7 +9,7 @@ Web app (FastAPI) that estimates Apache Flink cluster resource needs from worklo
 ## Features
 
 - **Home** — three entry points: start an estimation, open saved files, or read the Estimation Guide
-- **Tabbed form** — *Project & Hardware* (network, workers, memory/CPU targets; VM S/M/L auto-fills cores and RAM), *Workload* (throughput, record size, latency, keys, skew, number of applications), *Flink SQL query complexity* (simple / medium / complex counts)
+- **Tabbed form** — *Project & Hardware* (network, workers, memory/CPU/disk targets; VM S/M/L auto-fills and locks cores, RAM, and local NVMe disk), *Workload* (throughput, record size, latency, keys, skew, number of applications), *Flink SQL query complexity* (simple / medium / complex counts)
 - **Results** — summary and Flink-oriented recommendations; **Edit parameters and re-estimate** (reopens the form with the same values); **Save to JSON** and copy configuration snippets
 - **Saved list** — download, preview, delete, and reload a saved result page
 - **GET/JSON APIs** for estimate and save (see `/docs`)
@@ -71,11 +71,12 @@ curl -s -X POST "http://localhost:8000/api/estimate" \
     "nb_worker_nodes": 3,
     "worker_node_type": "bare_metal",
     "worker_node_memory_mb": 16384,
-    "worker_node_cpu_max": 8
+    "worker_node_cpu_max": 8,
+    "worker_node_disk_gb": 512
   }'
 ```
 
-For a full list of fields, defaults, and validation rules, use `/docs` or the Pydantic models in code.
+For a full list of fields, defaults, and validation rules, use `/docs` or the Pydantic models in code. The JSON/GET APIs also accept TaskManager-shape tuning (`cores_per_tm`, `mem_per_tm_mb`) not exposed on the HTML form.
 
 ## HTML routes
 
@@ -90,7 +91,13 @@ For a full list of fields, defaults, and validation rules, use `/docs` or the Py
 
 ## How the estimate is produced (brief)
 
-The engine combines throughput, record size, statement counts (scaled by the number of Flink applications), network ceiling, latency, key cardinality and skew, and worker shape to derive memory, CPU, node counts, and example Flink config lines. The in-app **Estimation Guide** lists assumptions (e.g. baselines, checkpointing) that matter more than a short README can cover.
+Three independent dimensions derive from the workload inputs:
+
+- **CPU (primary)** — throughput-driven and uncapped: cores per statement type scaled by a latency factor, plus JobManager cores. The headline output is **CP Flink nodes** = ⌈total cores / 8⌉, independent of the VM shape.
+- **State → local disk** — under the RocksDB state backend, keyed state sizes node-local NVMe (state × 1.5 compaction headroom), not RAM.
+- **RAM** — per-TaskManager process memory: a configurable baseline raised by a network/in-flight buffer heuristic when latency is tight.
+
+Worker/VM nodes are a secondary bin-pack of CPU, RAM, and disk onto the chosen node shape, so the recommended fleet always carries at least the cores the workload needs (`provisioned_cores >= total_cpus`). The in-app **Estimation Guide** lists assumptions (e.g. baselines, checkpointing) that matter more than a short README can cover.
 
 ## Docker
 
