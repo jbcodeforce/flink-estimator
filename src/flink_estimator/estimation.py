@@ -30,10 +30,12 @@ docs/superpowers/specs/2026-06-23-flink-estimator-sizing-model-redesign-design.m
 3. RAM — TaskManager process memory: a configurable baseline (default 4 GB/TM) raised by a network/
    in-flight buffer heuristic when latency is tight. State is excluded (see #2).
 
-Worker/VM nodes (SECONDARY) bin-pack RAM and local disk onto whole node shapes:
-   worker_nodes = ⌈ max( RAM_total / usable_ram_per_node, required_disk / disk_per_node ) ⌉.
-CPU never bounds the worker-node count. For packing efficiency, mem_per_tm should evenly divide a
-node's usable RAM (otherwise RAM is stranded; reported in diagnostics).
+Worker/VM nodes (SECONDARY) bin-pack CPU, RAM, and local disk onto whole node shapes:
+   worker_nodes = max( ⌈total_cores / cores_per_node⌉, RAM-pack nodes, ⌈required_disk / disk_per_node⌉ ).
+The CPU term guarantees the recommended fleet physically carries the cores the workload needs
+(provisioned_cores >= total_cpus). RocksDB state is node-local, so the TaskManager count is raised
+to at least the disk-node count (one TM per state-bearing node). For packing efficiency, mem_per_tm
+should evenly divide a node's usable RAM (otherwise RAM is stranded; reported in diagnostics).
 
 Throughput rule of thumb: ~24000 simple / 11000 medium / 2500 complex records per second per core;
 lower with bigger messages, bigger state, key skew, or many distinct keys. Key size assumed minimal.
@@ -82,7 +84,8 @@ from .models import (
     SavedEstimation,
     CapacityAnalysis,
     SizingDiagnostics,
-    VM_TSHIRT_MB_CPU
+    VM_TSHIRT_MB_CPU,
+    CP_FLINK_NODE_CORES,
 )
 
 # Configuration
@@ -109,11 +112,6 @@ TM_MEM_MB = 4096  # Default Task Manager total process memory size in MB (overri
 TM_PROCESS_MEMORY_MAX_MB = 64 * 1024  # ceiling for any single TaskManager process (MB)
 IN_FLIGHT_TO_BUFFER = 0.4  # fraction of in-flight (throughput*latency) attributed to TM network/buffer memory
 THROUGHPUT_BUFFER_K = 1.4  # MB per (MB/s per-TM) scaling for low-latency shuffles/serialization
-
-# A "CP Flink node" is a normalized buy unit: a collection of 8 cores running CP Flink workloads.
-# The primary output is the aggregate cores of all CP Flink workloads (TaskManagers + JobManagers)
-# divided into 8-core nodes. Worker/VM nodes are a separate, shape-dependent bin-packing metric.
-CP_FLINK_NODE_CORES = 8
 
 # RocksDB keeps state on local NVMe disk. Raw state needs headroom for compaction, WAL, and SST
 # overlap during merges; size local disk at state_size x this factor.
@@ -199,16 +197,67 @@ def _resolve_per_tm_memory_mb(
     return int(min(cap, max(input_params.mem_per_tm_mb, buffer_mb)))
 
 
+def _resolve_tm_shape(
+    input_params: EstimationInput,
+    total_throughput_mb_per_sec: float,
+    nb_taskmanagers: int,
+) -> tuple[int, int]:
+    """
+    Resolve (per_tm_mem_mb, nb_taskmanagers) together. When the network/in-flight buffer
+    heuristic needs more memory than the per-worker cap, split the work across more
+    TaskManagers — per-TM throughput and buffers shrink with N — instead of silently
+    truncating the aggregate RAM figure at the cap.
+    """
+    cap = _per_tm_cap_mb(input_params)
+    # The heuristic has a fixed per-TM overhead term (grows with statement count) that does
+    # not shrink with N. If that floor alone exceeds the cap, no TM count can satisfy it.
+    buffer_floor_mb = _network_buffer_min_process_memory_mb(
+        input_params, total_throughput_mb_per_sec, 10**9
+    )
+    if buffer_floor_mb > cap:
+        raise ValueError(
+            f"Per-TaskManager buffer overhead is at least {buffer_floor_mb} MB for "
+            f"{input_params.total_statements} total statements, more than the {cap} MB a worker "
+            "node can host. Use larger worker nodes or fewer statements/applications per estimate."
+        )
+    n = nb_taskmanagers
+    for _ in range(20):
+        buffer_mb = _network_buffer_min_process_memory_mb(
+            input_params, total_throughput_mb_per_sec, n
+        )
+        if buffer_mb <= cap:
+            break
+        # The variable part of buffer memory scales ~1/N, so a proportional step converges
+        # geometrically toward the satisfiable fixed point guaranteed by the floor check.
+        n = max(n + 1, math.ceil(n * buffer_mb / cap))
+    else:
+        logger.warning(
+            "TM-count growth did not settle after 20 iterations (buffer floor %s MB close to "
+            "cap %s MB); using %s TaskManagers", buffer_floor_mb, cap, n,
+        )
+    return _resolve_per_tm_memory_mb(input_params, total_throughput_mb_per_sec, n), n
+
+
+def _disk_nodes_needed(input_params: EstimationInput, required_disk_gb: int) -> int:
+    """Worker nodes required to hold the RocksDB state on node-local NVMe."""
+    if required_disk_gb <= 0:
+        return 0
+    return math.ceil(required_disk_gb / int(input_params.worker_node_disk_gb))
+
+
 def _pack_worker_nodes(
     input_params: EstimationInput,
     nb_taskmanagers: int,
     per_tm_mem_mb: int,
     jm_memory: int,
     required_disk_gb: int,
+    total_cores: float,
 ) -> dict:
     """
-    Secondary metric: bin-pack TaskManager RAM and RocksDB local disk onto whole worker/VM nodes.
-    CPU does not constrain node count (cores are fractional and freely allocatable to TMs).
+    Secondary metric: bin-pack CPU, TaskManager RAM, and RocksDB local disk onto whole
+    worker/VM nodes. The CPU term guarantees the fleet physically carries total_cores
+    (provisioned_cores >= total_cpus); RAM places TMs and JMs as whole units; disk assumes
+    the caller provides at least one TaskManager per state-bearing node (state is node-local).
 
     Returns a dict of packing facts used by both ResourceEstimates and SizingDiagnostics.
     """
@@ -218,37 +267,47 @@ def _pack_worker_nodes(
             f"A worker node has {usable_ram_per_node} MB usable RAM, too small for a "
             f"{per_tm_mem_mb} MB TaskManager. Use a larger node shape or smaller mem_per_tm_mb."
         )
+    if jm_memory > usable_ram_per_node:
+        raise ValueError(
+            f"A worker node has {usable_ram_per_node} MB usable RAM, too small for a "
+            f"{jm_memory} MB JobManager. Use a larger node shape."
+        )
     tms_per_node = usable_ram_per_node // per_tm_mem_mb
     stranded_ram = usable_ram_per_node - tms_per_node * per_tm_mem_mb
 
     apps = max(1, input_params.number_flink_applications)
-    # Place TaskManagers whole (accounts for per-TM stranding), then fit JobManager memory into
-    # the RAM left unused on those nodes, adding nodes only if it does not fit.
-    nodes_for_tms = math.ceil(nb_taskmanagers / tms_per_node)
-    remaining_ram = nodes_for_tms * usable_ram_per_node - nb_taskmanagers * per_tm_mem_mb
-    jm_demand = jm_memory * apps
-    if jm_demand <= remaining_ram:
+    # Place TaskManagers whole, then place JobManagers as whole units too: a JM only fits in a
+    # node's leftover if that single node's leftover holds it — fragments cannot be pooled.
+    full_tm_nodes, rem_tms = divmod(nb_taskmanagers, tms_per_node)
+    nodes_for_tms = full_tm_nodes + (1 if rem_tms else 0)
+    leftovers = [stranded_ram] * full_tm_nodes
+    if rem_tms:
+        leftovers.append(usable_ram_per_node - rem_tms * per_tm_mem_mb)
+    jms_unplaced = apps - sum(leftover // jm_memory for leftover in leftovers)
+    if jms_unplaced <= 0:
         ram_nodes = nodes_for_tms
     else:
-        ram_nodes = nodes_for_tms + math.ceil((jm_demand - remaining_ram) / usable_ram_per_node)
+        jms_per_empty_node = usable_ram_per_node // jm_memory
+        ram_nodes = nodes_for_tms + math.ceil(jms_unplaced / jms_per_empty_node)
     ram_nodes = max(1, ram_nodes)
 
-    disk_per_node = int(input_params.worker_node_disk_gb)
-    disk_nodes = math.ceil(required_disk_gb / disk_per_node) if required_disk_gb > 0 else 0
+    disk_nodes = _disk_nodes_needed(input_params, required_disk_gb)
+    cpu_nodes = math.ceil(total_cores / int(input_params.worker_node_cpu_max))
 
-    # Worker-node count is the actual RAM/disk packing need; the requested nb_worker_nodes is an
-    # informational echo on the summary, not a floor that forces over-provisioning.
-    worker_nodes = max(1, ram_nodes, disk_nodes)
-    if ram_nodes > disk_nodes:
-        bounding = "ram"
-    elif disk_nodes > ram_nodes:
-        bounding = "disk"
-    else:
-        bounding = "balanced"
+    # Worker-node count is the actual CPU/RAM/disk packing need; the requested nb_worker_nodes
+    # is an informational echo on the summary, not a floor that forces over-provisioning.
+    worker_nodes = max(1, cpu_nodes, ram_nodes, disk_nodes)
+    dominant = [
+        name
+        for name, count in (("cpu", cpu_nodes), ("ram", ram_nodes), ("disk", disk_nodes))
+        if count == worker_nodes
+    ]
+    bounding = dominant[0] if len(dominant) == 1 else "balanced"
 
     ram_total_mb = nb_taskmanagers * per_tm_mem_mb + jm_memory * apps
     return {
         "worker_nodes": worker_nodes,
+        "cpu_nodes": cpu_nodes,
         "ram_nodes": ram_nodes,
         "disk_nodes": disk_nodes,
         "tms_per_node": tms_per_node,
@@ -267,7 +326,7 @@ def _compute_sizing_diagnostics(
     required_disk_gb: int,
     packing: dict,
 ) -> SizingDiagnostics:
-    """Surface the intermediate sizing values and which of RAM/disk bounds the worker-node count."""
+    """Surface the intermediate sizing values and which of CPU/RAM/disk bounds the worker-node count."""
     return SizingDiagnostics(
         tm_cores=round(tm_cores, 2),
         jm_cores=round(jm_cores, 2),
@@ -278,6 +337,7 @@ def _compute_sizing_diagnostics(
         required_disk_gb=required_disk_gb,
         tms_per_node=int(packing["tms_per_node"]),
         stranded_ram_mb_per_node=int(packing["stranded_ram_mb_per_node"]),
+        cpu_nodes=int(packing["cpu_nodes"]),
         ram_nodes=int(packing["ram_nodes"]),
         disk_nodes=int(packing["disk_nodes"]),
         worker_node_bounding_factor=packing["bounding"],
@@ -317,15 +377,18 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
                 tm_cores, jm_cores, total_cores, cp_flink_nodes)
 
     # --- TaskManager shape ------------------------------------------------------------
-    nb_task_managers = max(1, math.ceil(tm_cores / input_params.cores_per_tm))
-    per_tm_mem_mb = _resolve_per_tm_memory_mb(
+    state_size_gb, required_disk_gb = _state_disk_gb(input_params)
+    disk_nodes = _disk_nodes_needed(input_params, required_disk_gb)
+    # RocksDB state is node-local: every state-bearing node needs at least one TaskManager,
+    # so the TM count is floored at the disk-node count (more, smaller TMs spread the state).
+    nb_task_managers = max(1, math.ceil(tm_cores / input_params.cores_per_tm), disk_nodes)
+    per_tm_mem_mb, nb_task_managers = _resolve_tm_shape(
         input_params, total_throughput_mb_per_sec, nb_task_managers
     )
 
-    # --- SECONDARY: state on local disk, RAM + disk bin-packed onto worker/VM nodes ----
-    state_size_gb, required_disk_gb = _state_disk_gb(input_params)
+    # --- SECONDARY: CPU, RAM, and state disk bin-packed onto worker/VM nodes -----------
     packing = _pack_worker_nodes(
-        input_params, nb_task_managers, per_tm_mem_mb, jm_memory, required_disk_gb
+        input_params, nb_task_managers, per_tm_mem_mb, jm_memory, required_disk_gb, total_cores
     )
     logger.info("packing: %s", packing)
 
@@ -352,8 +415,8 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
     # Placeholder until processing_load is fully wired; matches scaling checkpoint heuristic seed.
     processing_load_score = 1.0
-    # Cores that physically come with the worker nodes provisioned for RAM/disk. Equals the compute
-    # need on a balanced shape, but exceeds it when a RAM/disk-light shape forces extra nodes.
+    # Cores that physically come with the provisioned worker nodes. The CPU packing term keeps
+    # this at or above total_cpus; it exceeds it when a RAM/disk-light shape forces extra nodes.
     provisioned_cores = packing["worker_nodes"] * int(input_params.worker_node_cpu_max)
     resource_estimates = ResourceEstimates(
         cp_flink_nodes=cp_flink_nodes,

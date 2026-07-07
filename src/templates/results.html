@@ -92,6 +92,8 @@
                     <div class="resource-value">{{ estimation.resource_estimates.provisioned_cores }}</div>
                     {% if estimation.resource_estimates.provisioned_cores > estimation.resource_estimates.total_cpus %}
                     <div class="resource-subtext">Nodes × cores/node — {{ estimation.resource_estimates.provisioned_cores - estimation.resource_estimates.total_cpus }} cores beyond the {{ estimation.resource_estimates.total_cpus }} the workload needs (RAM/disk packing drives node count)</div>
+                    {% elif estimation.resource_estimates.provisioned_cores < estimation.resource_estimates.total_cpus %}
+                    <div class="resource-subtext">⚠️ Only {{ estimation.resource_estimates.provisioned_cores }} of the {{ estimation.resource_estimates.total_cpus }} cores the workload needs — legacy estimate; re-run it to size a fleet that covers the compute need</div>
                     {% else %}
                     <div class="resource-subtext">Nodes × cores/node — matches the compute need</div>
                     {% endif %}
@@ -103,7 +105,7 @@
         {% set diag = estimation.sizing_diagnostics %}
         <div class="result-section">
             <h2>Sizing Diagnostics</h2>
-            <p class="section-hint">CPU drives the CP Flink node count; RAM and local disk independently drive the worker/VM node count.</p>
+            <p class="section-hint">CPU drives the CP Flink node count; CPU, RAM, and local disk each independently floor the worker/VM node count.</p>
             <div class="scaling-grid bounding-grid">
                 <div class="bounding-card">
                     <h4>Cores (CP Flink nodes)</h4>
@@ -117,11 +119,13 @@
                         Local disk bound
                         {% elif diag.worker_node_bounding_factor == 'ram' %}
                         RAM bound
+                        {% elif diag.worker_node_bounding_factor == 'cpu' %}
+                        CPU bound
                         {% else %}
-                        Balanced (RAM = disk)
+                        Balanced
                         {% endif %}
                     </div>
-                    <div class="bounding-detail">RAM: {{ diag.ram_nodes }} nodes · Disk: {{ diag.disk_nodes }} nodes</div>
+                    <div class="bounding-detail">CPU: {{ diag.cpu_nodes }} · RAM: {{ diag.ram_nodes }} · Disk: {{ diag.disk_nodes }} nodes</div>
                 </div>
                 <div class="bounding-card">
                     <h4>Per-TM packing</h4>

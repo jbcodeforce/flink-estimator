@@ -686,6 +686,7 @@ body {
 }
 
 .bounding-memory,
+.bounding-ram,
 .bounding-state {
     background: rgba(217, 119, 6, 0.12);
     color: #b45309;
@@ -697,7 +698,8 @@ body {
     color: var(--success-color);
 }
 
-.bounding-buffers {
+.bounding-buffers,
+.bounding-disk {
     background: rgba(23, 162, 184, 0.12);
     color: var(--info-color);
 }

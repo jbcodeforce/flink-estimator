@@ -5,8 +5,15 @@ This module contains all data models used for input validation,
 estimation results, and file persistence.
 """
 
+import math
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Literal, Optional
+
+# A "CP Flink node" is a normalized buy unit: a collection of 8 cores running CP Flink workloads
+# (TaskManagers + JobManagers). Lives here (not estimation.py) so persistence-format migration
+# can derive cp_flink_nodes for legacy saved files.
+CP_FLINK_NODE_CORES = 8
 
 # When worker_node_type is VM, memory / CPU / local NVMe disk are derived from worker_node_t_size.
 # Tuple order: (memory_mb, cpu_cores, local_disk_gb). Local disk is node-local NVMe for RocksDB state.
@@ -136,18 +143,24 @@ class ResourceEstimates(BaseModel):
 
     Primary buy unit is ``cp_flink_nodes`` (8 cores each, derived from aggregate CPUs of all
     CP Flink workloads — TaskManagers + JobManagers). ``total_worker_node_needed`` is a secondary,
-    VM-shape-dependent bin-packing metric bounded by RAM and local disk only.
+    VM-shape-dependent bin-packing metric bounded by CPU, RAM, and local disk, so the
+    recommended fleet always carries at least ``total_cpus`` cores.
     """
     cp_flink_nodes: int = Field(..., description="PRIMARY: ⌈total CPUs / 8⌉; a CP Flink node is 8 cores")
     total_cpus: int = Field(..., description="Aggregate CPU cores the workload needs (TaskManagers + JobManagers)")
     provisioned_cores: int = Field(
         ...,
-        description="Cores physically provisioned = worker nodes × cores per node. Exceeds total_cpus "
-        "when a RAM/disk-constrained node shape forces more nodes than the compute need.",
+        description="Cores physically provisioned = worker nodes × cores per node. Never below "
+        "total_cpus; exceeds it when a RAM/disk-constrained node shape forces more nodes than "
+        "the compute need.",
     )
-    total_memory_mb: int
+    total_memory_mb: int = Field(
+        ...,
+        description="Aggregate Flink process RAM (TaskManagers + JobManagers). Keyed state is NOT "
+        "included — under RocksDB it lives on local disk (total_disk_gb).",
+    )
     total_disk_gb: int = Field(..., description="Local NVMe disk for RocksDB state incl. compaction headroom")
-    total_worker_node_needed: int = Field(..., description="SECONDARY: VM nodes to bin-pack RAM and disk")
+    total_worker_node_needed: int = Field(..., description="SECONDARY: VM nodes to bin-pack CPU, RAM, and disk")
     processing_load_score: float
 
 
@@ -180,23 +193,29 @@ class CapacityAnalysis(BaseModel):
 class SizingDiagnostics(BaseModel):
     """Intermediate sizing values and which resource bounds the secondary worker-node count.
 
-    CPU drives the primary CP Flink node count; RAM and local disk independently drive the
-    secondary VM/worker-node bin-packing. ``worker_node_bounding_factor`` says which of RAM or
-    disk forced the worker-node count.
+    CPU drives the primary CP Flink node count; CPU, RAM, and local disk each independently
+    floor the secondary VM/worker-node bin-packing. ``worker_node_bounding_factor`` says which
+    of them forced the worker-node count.
     """
     tm_cores: float = Field(..., description="Cores for TaskManager throughput work (uncapped, fractional)")
     jm_cores: float = Field(..., description="Cores for JobManagers (jm_cpu × applications)")
-    nb_taskmanagers: int = Field(..., description="⌈tm_cores / cores_per_tm⌉")
+    nb_taskmanagers: int = Field(
+        ...,
+        description="TaskManager count: ⌈tm_cores / cores_per_tm⌉, raised to the disk-node count "
+        "(RocksDB state is node-local) and grown further when per-TM buffer memory would "
+        "exceed the per-worker cap",
+    )
     mem_per_tm_mb: int = Field(..., description="Process memory per TaskManager (MB)")
     ram_total_mb: int = Field(..., description="Aggregate TaskManager process memory incl. buffer headroom (MB)")
     state_size_gb: float = Field(..., description="Total keyed state size (GB) before RocksDB headroom")
     required_disk_gb: int = Field(..., description="state_size × amplification (GB) bin-packed onto local NVMe")
     tms_per_node: int = Field(..., description="TaskManagers that fit per worker node by usable RAM")
     stranded_ram_mb_per_node: int = Field(..., description="Usable RAM left over per node when mem_per_tm does not evenly divide it")
+    cpu_nodes: int = Field(..., description="Worker nodes required to physically carry total cores (⌈total_cores / cores_per_node⌉)")
     ram_nodes: int = Field(..., description="Worker nodes required to hold aggregate RAM")
     disk_nodes: int = Field(..., description="Worker nodes required to hold required_disk_gb")
-    worker_node_bounding_factor: Literal["ram", "disk", "balanced"] = Field(
-        ..., description="Whether RAM or local disk drives the worker-node count"
+    worker_node_bounding_factor: Literal["cpu", "ram", "disk", "balanced"] = Field(
+        ..., description="Whether CPU, RAM, or local disk drives the worker-node count"
     )
 
 
@@ -231,3 +250,35 @@ class SavedEstimation(BaseModel):
     input_parameters: EstimationInput
     estimation_results: EstimationResult
     version: str = "1.0"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_saved_format(cls, data):
+        """Files saved before the sizing-model redesign lack cp_flink_nodes /
+        provisioned_cores / total_disk_gb and carry an incompatible sizing_diagnostics
+        shape. Derive what the legacy fields allow and drop the incompatible diagnostics
+        so old files keep reloading."""
+        if not isinstance(data, dict):
+            return data
+        results = data.get("estimation_results")
+        if not isinstance(results, dict):
+            return data
+        estimates = results.get("resource_estimates")
+        if not isinstance(estimates, dict) or "cp_flink_nodes" in estimates:
+            return data
+        total_cpus = int(estimates.get("total_cpus") or 0)
+        worker_nodes = int(estimates.get("total_worker_node_needed") or 0)
+        inputs = data.get("input_parameters")
+        cores_per_node = int(inputs.get("worker_node_cpu_max") or 0) if isinstance(inputs, dict) else 0
+        # Rewrite copies, not the caller's dicts.
+        estimates = {
+            **estimates,
+            "cp_flink_nodes": max(1, math.ceil(total_cpus / CP_FLINK_NODE_CORES)),
+            "provisioned_cores": worker_nodes * cores_per_node,
+            "total_disk_gb": 0,
+        }
+        results = {**results, "resource_estimates": estimates}
+        diagnostics = results.get("sizing_diagnostics")
+        if isinstance(diagnostics, dict) and "tm_cores" not in diagnostics:
+            results["sizing_diagnostics"] = None
+        return {**data, "estimation_results": results}

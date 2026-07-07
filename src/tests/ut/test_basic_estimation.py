@@ -157,23 +157,30 @@ class TestPrivateHelpers:
         assert _network_buffer_min_process_memory_mb(input_params, tmbps, 1) >= 200  # MB
 
     def test_pack_worker_nodes_ram_and_disk(self, vm_s_estimation_input):
-        """_pack_worker_nodes: node count is max(RAM pack, disk pack); reports stranding and bounding factor."""
-        input_params = _defaulting_input_params(vm_s_estimation_input)  # S: 16 GB / 512 GB disk
+        """_pack_worker_nodes: node count is max(CPU, RAM pack, disk pack); reports stranding and bounding factor."""
+        input_params = _defaulting_input_params(vm_s_estimation_input)  # S: 16 GB / 8 cores / 512 GB disk
         # 5 TMs of 4 GB: usable 15872 MB -> 3 TMs/node, 3584 MB stranded -> 2 nodes for TMs.
         pack = _pack_worker_nodes(input_params, nb_taskmanagers=5, per_tm_mem_mb=4096,
-                                  jm_memory=2048, required_disk_gb=100)
+                                  jm_memory=2048, required_disk_gb=100, total_cores=6.0)
         assert pack["tms_per_node"] == 3
         assert pack["stranded_ram_mb_per_node"] == 15872 - 3 * 4096
         assert pack["ram_nodes"] == 2
         assert pack["disk_nodes"] == 1  # 100 GB fits one 512 GB node
+        assert pack["cpu_nodes"] == 1  # 6 cores fit one 8-core node
         assert pack["worker_nodes"] == 2
         assert pack["bounding"] == "ram"
         # Disk-bound: huge state forces more nodes than RAM.
         pack2 = _pack_worker_nodes(input_params, nb_taskmanagers=1, per_tm_mem_mb=4096,
-                                   jm_memory=2048, required_disk_gb=5000)
+                                   jm_memory=2048, required_disk_gb=5000, total_cores=2.0)
         assert pack2["disk_nodes"] == math.ceil(5000 / 512)
         assert pack2["worker_nodes"] == pack2["disk_nodes"]
         assert pack2["bounding"] == "disk"
+        # CPU-bound: a core-heavy workload on the same shape needs nodes for the cores alone.
+        pack3 = _pack_worker_nodes(input_params, nb_taskmanagers=3, per_tm_mem_mb=4096,
+                                   jm_memory=2048, required_disk_gb=100, total_cores=40.0)
+        assert pack3["cpu_nodes"] == math.ceil(40 / 8)
+        assert pack3["worker_nodes"] == pack3["cpu_nodes"]
+        assert pack3["bounding"] == "cpu"
 
     def test_resolve_per_tm_memory_floor_and_buffer(self, vm_s_estimation_input):
         """_resolve_per_tm_memory_mb: never below configured mem_per_tm; rises with tight-latency buffers."""
