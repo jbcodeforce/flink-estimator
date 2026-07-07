@@ -13,8 +13,7 @@ But those numbers may go lower with bigger messages, bigger state, key skew, num
 
 Statement complexity reflect the usage of complex operators, like joins, windowed aggregations, etc.
 
-Sizing model (three independent dimensions; see
-docs/superpowers/specs/2026-06-23-flink-estimator-sizing-model-redesign-design.md):
+Sizing model (three independent dimensions):
 
 1. CPU (PRIMARY) — throughput-driven and uncapped: cores = Σ(throughput / per-core-rate × stmts),
    scaled by a latency factor, per statement type, plus JobManager cores. State does NOT add cores.

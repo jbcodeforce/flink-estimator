@@ -5,9 +5,9 @@ Covers _defaulting_input_params; _assess_jobmanager_size; _throughput_cores (unc
 _state_disk_gb; _pack_worker_nodes; _resolve_per_tm_memory_mb; _network_buffer_min_process_memory_mb;
 _latency_cpu_factor; and full calculate_flink_estimation with VM t-shirts or custom worker fields.
 
-Sizing model (see docs/superpowers/specs/2026-06-23-flink-estimator-sizing-model-redesign-design.md):
+Sizing model:
   PRIMARY   cp_flink_nodes = ceil(total_cores / 8); total_cores = throughput cores + JM cores.
-  SECONDARY worker/VM nodes = bin-pack TM RAM and RocksDB local disk; CPU never bounds node count.
+  SECONDARY worker/VM nodes = max(CPU, RAM pack, disk pack) so the fleet always carries total_cores.
 """
 
 import pytest
