@@ -135,7 +135,7 @@ class TestTaskManagerCountCpuConstraint:
     """Extreme throughput with one stateless op: TM aggregate CPUs stay at or below resource_estimates.total_cpus."""
 
     def test_cluster_taskmanager_cpu_covers_workload_estimate(self):
-        """~512 MB/s, one simple op, 10M keys, low skew: TM total_cpus is capped by cluster math vs. resource line."""
+        """~512 MB/s, one simple op, 10M keys, low skew: throughput drives cores; CPU is not state-inflated."""
         # 524288 * 1024 B/s / (1024*1024) = 512 MB/s
         mps = 524288
         record_bytes = 1024
@@ -149,7 +149,7 @@ class TestTaskManagerCountCpuConstraint:
             expected_latency_seconds=10.0,
             simple_statements=1,
             medium_statements=0,
-            complex_statements=0,
+            complex_statements=0
         )
 
         result = calculate_flink_estimation(input_params)
@@ -166,14 +166,17 @@ class TestTaskManagerCountCpuConstraint:
 
         diag = result.sizing_diagnostics
         assert diag is not None
-        assert diag.total_cpu_bounding_factor == "throughput"
+        # Stateless single op: cores follow throughput (~512/23.4 ≈ 22), state/disk is zero.
+        simple_mbps = 24000 * record_bytes / (1024 * 1024)
+        assert diag.tm_cores == pytest.approx(expected_mbps / simple_mbps, rel=1e-2)
+        assert diag.required_disk_gb == 0
 
 
 class TestSizingDiagnostics:
-    """SizingDiagnostics on EstimationResult labels CPU vs memory bounding."""
+    """SizingDiagnostics on EstimationResult: CPU is throughput-driven; RAM/disk bound worker nodes."""
 
     def test_cpu_bound_high_throughput_low_state(self):
-        """High throughput, many simple ops: TM count driven by CPU path."""
+        """High throughput, many simple stateless ops: cores scale with throughput, no disk."""
         result = calculate_flink_estimation(
             EstimationInput(
                 project_name="CPU bound",
@@ -188,34 +191,37 @@ class TestSizingDiagnostics:
         )
         diag = result.sizing_diagnostics
         assert diag is not None
-        assert diag.tm_count_bounding_factor == "cpu"
-        assert diag.nb_tm_cpu > diag.nb_tm_state
-        assert diag.total_cpu_bounding_factor == "throughput"
+        # 10 stateless simple ops at ~512 MB/s -> ~220 cores; none clamped by a per-statement cap.
+        assert diag.tm_cores > 100
+        assert diag.required_disk_gb == 0
+        assert diag.nb_taskmanagers == result.cluster_recommendations.taskmanagers.count
 
     def test_memory_bound_large_state(self):
-        """Many keys with medium/complex statements: TM count or per-TM memory from state."""
+        """Many keys with medium/complex statements: large local-disk requirement bounds worker nodes."""
         result = calculate_flink_estimation(
             EstimationInput(
                 project_name="Memory bound",
                 messages_per_second=1000,
                 avg_record_size_bytes=4096,
-                num_distinct_keys=50_000_000,
+                num_distinct_keys=200_000_000,
                 expected_latency_seconds=10.0,
                 simple_statements=0,
                 medium_statements=2,
                 complex_statements=2,
-                worker_node_memory_mb=65536,
-                worker_node_cpu_max=32,
+                worker_node_type="VM",
+                worker_node_t_size="M",
             )
         )
         diag = result.sizing_diagnostics
         assert diag is not None
-        assert diag.tm_count_bounding_factor == "memory"
-        assert diag.per_tm_memory_bounding_factor == "state"
-        assert diag.total_cpu_bounding_factor == "tm_slots"
+        # 200M keys × 4 stateful × 4 KiB ≈ 3 TiB state -> disk spills past one 2 TB node; tiny cores.
+        assert diag.required_disk_gb > 2048
+        assert diag.tm_cores < 20
+        assert diag.disk_nodes > diag.ram_nodes
+        assert diag.worker_node_bounding_factor == "disk"
 
-    def test_buffer_bound_tight_latency(self):
-        """Tight latency on high throughput: per-TM memory often buffer-driven."""
+    def test_buffer_bound_tight_latency_fat_tms(self):
+        """Tight latency with few fat TMs (high cores_per_tm): per-TM memory exceeds the 4 GB floor."""
         result = calculate_flink_estimation(
             EstimationInput(
                 project_name="Buffer bound",
@@ -226,14 +232,15 @@ class TestSizingDiagnostics:
                 simple_statements=1,
                 medium_statements=0,
                 complex_statements=0,
+                cores_per_tm=64,  # few, fat TaskManagers -> high per-TM throughput -> big buffers
                 worker_node_memory_mb=256 * 1024,
                 worker_node_cpu_max=64,
+                worker_node_disk_gb=4096,
             )
         )
         diag = result.sizing_diagnostics
         assert diag is not None
-        assert diag.per_tm_memory_bounding_factor in ("buffers", "state")
-        assert diag.buffer_mb > 0
+        assert diag.mem_per_tm_mb > 4096
 
 
 class TestLatencyBufferMemory:
@@ -270,7 +277,7 @@ class TestLatencyBufferMemory:
         )
 
     def test_cpu_dominant_low_latency_tm_memory_not_trivial_4g_only(self):
-        """High per-TM throughput and 0.5s latency: buffer heuristic can exceed 4096 MB per TaskManager."""
+        """High per-TM throughput (few fat TMs) and 0.5s latency: per-TM memory exceeds the 4 GB floor."""
         mps = 2_000_000
         record_bytes = 2048
         input_params = EstimationInput(
@@ -284,8 +291,10 @@ class TestLatencyBufferMemory:
             simple_statements=1,
             medium_statements=0,
             complex_statements=0,
+            cores_per_tm=64,  # few, fat TaskManagers concentrate throughput per TM
             worker_node_memory_mb=256 * 1024,
             worker_node_cpu_max=64,
+            worker_node_disk_gb=4096,
         )
         r = calculate_flink_estimation(input_params)
         tm = r.cluster_recommendations.taskmanagers
@@ -534,7 +543,7 @@ class TestInputValidation:
         """VM T-shirt: model_validator replaces any ad-hoc worker memory/CPU (see VM_TSHIRT in basic)."""
         from flink_estimator.models import VM_TSHIRT_MB_CPU
 
-        mb, cpus = VM_TSHIRT_MB_CPU["S"]
+        mb, cpus, disk = VM_TSHIRT_MB_CPU["S"]
         inp = EstimationInput(
             project_name="SKU",
             messages_per_second=100,
@@ -543,9 +552,11 @@ class TestInputValidation:
             worker_node_t_size="S",
             worker_node_memory_mb=1.0,
             worker_node_cpu_max=99,
+            worker_node_disk_gb=7,
         )
         assert inp.worker_node_memory_mb == mb
         assert inp.worker_node_cpu_max == cpus
+        assert inp.worker_node_disk_gb == disk
 
 
 # Fixture for common test data
@@ -705,7 +716,8 @@ class TestDataSkewAndBandwidth:
 
 
 def test_nb_worker_nodes_in_input_and_total_worker_node_needed():
-    """input_summary keeps requested nb_worker_nodes; total_worker_node_needed is min(nodes_used, nb_worker_nodes) in the engine."""
+    """input_summary echoes the requested nb_worker_nodes; total_worker_node_needed reflects the actual
+    RAM/disk packing need (the request is informational, not a floor that over-provisions)."""
     tiny = EstimationInput(
         project_name="Floor nodes",
         messages_per_second=100,

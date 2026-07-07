@@ -13,44 +13,32 @@ But those numbers may go lower with bigger messages, bigger state, key skew, num
 
 Statement complexity reflect the usage of complex operators, like joins, windowed aggregations, etc.
 
-Source and Sink latency: CPU scaling uses expected_latency_seconds. Flink process memory includes a
-heuristic for network and in-flight buffering (tighter latency and higher per-TM throughput add headroom
-beyond the fixed 4GB baseline; stateful sizing still uses managed-memory fraction, relaxed when latency is tight).
-Assumed the key size is minimal, a few bytes
+Sizing model (three independent dimensions; 
+1. CPU (PRIMARY) — throughput-driven and uncapped: cores = Σ(throughput / per-core-rate × stmts),
+   scaled by a latency factor, per statement type, plus JobManager cores. State does NOT add cores.
+   total_cores = TaskManager cores + JobManager cores. A "CP Flink node" is 8 cores, so the headline
+   output is cp_flink_nodes = ⌈total_cores / 8⌉. Cores are fractional and freely allocatable to TMs.
 
-A Flink job is composed of a graph of operators, Operators are deployed, chained in threads, and executed in task managers with a configured parallelism
-* Each Operator has its own costs
-* Working State is kept locally in RocksDB impacting storage requirements
-* But is backed up and restored remotely to distributed storage impacting checkpoint size and latency
-* Depends on operator structure and settings and message size
-* Checkpoint copies state for recovery
-* Checkpoint Interval determines how frequently state is captured
-* Aggregate State Size consumes bandwidth, determines recovery time which impacts latency
+2. Local disk (state) — under the EmbeddedRocksDBStateBackend (recommended default) keyed state lives
+   on the TaskManager's local NVMe disk, NOT in RAM; only a bounded managed-memory slice is cached and
+   it does not scale with state size. state_size = keys × (medium+complex stmts) × record × apps;
+   required disk = state_size × 1.5 (RocksDB compaction/WAL headroom). HashMapStateBackend (heap, RAM-
+   bound) is not modeled — assume rocksdb.
 
-The estimator work for container based deployments. The memory constraints are for total process memory, but state
-is kept in RockDB. With HashMapStateBackend Flink holds data internally as objects on the Java heap.
-The EmbeddedRocksDBStateBackend holds in-flight data in a RocksDB database that is (per default) stored in the TaskManager local data directories.
-The amount of state that you can keep is only limited by the amount of disk space available.
+3. RAM — TaskManager process memory: a configurable baseline (default 4 GB/TM) raised by a network/
+   in-flight buffer heuristic when latency is tight. State is excluded (see #2).
 
-Flink process memory (heap, network buffers, managed memory) is still estimated in aggregate; on-disk state volume is a separate concern from that process-memory line.
+Worker/VM nodes (SECONDARY) bin-pack RAM and local disk onto whole node shapes:
+   worker_nodes = ⌈ max( RAM_total / usable_ram_per_node, required_disk / disk_per_node ) ⌉.
+CPU never bounds the worker-node count. For packing efficiency, mem_per_tm should evenly divide a
+node's usable RAM (otherwise RAM is stranded; reported in diagnostics).
 
-For k8s deployments, the minimum number of worker nodes for Flink is 3 for HA.
+Throughput rule of thumb: ~24000 simple / 11000 medium / 2500 complex records per second per core;
+lower with bigger messages, bigger state, key skew, or many distinct keys. Key size assumed minimal.
 
-CPU means an actual bare metal processing unit that has at least one CPU Core. Multi-core or hyperthreading processors are counted as one CPU.
-A CPU Core refers to "cpu units" in Kubernetes. 1 CPU is equivalent to one AWS vCPU, 1 GCP core, 1 Azure vCore or 1 hyperthread on a bare-metal 
-processor with hyperthreading enabled.
-
-Consider a Flink node (running task managers) to be a 4 CPU node, with 16GB of memory. It should
-be able to run 3 task managers, as default configuration is 1 core and 4 GB of memory per task manager.
-They should process 20 to 50 MB/s of data.
-
-Think to scale vertically before horizontally.
-
-Heuristics:
-* increase the number of task managers until there is enough resource to get the expected 
-throughput or memory size to keep state
-
-total_nodes is a coarse count from total CPU and an 8-cores-per-node assumption (minimum 3). 
+CPU means a processing unit with at least one core; a CPU core maps to a Kubernetes "cpu unit"
+(1 AWS vCPU / 1 GCP core / 1 Azure vCore / 1 hyperthread). For k8s HA, a real deployment uses >= 3
+worker nodes. Scale vertically before horizontally.
 
 """
 
@@ -104,7 +92,7 @@ OS_MEM_MB = 512
 # record per second per core per statement type
 SIMPLE_RPS= 24000 
 MEDIUM_RPS= 11000
-COMPLEX_RPS= 2500
+COMPLEX_RPS= 5500
 
 # Flink Task Manager and job manager parameters
 JOBMANAGER_MEM_MB = 2048
@@ -115,49 +103,38 @@ JM_TSHIRT_CPU_MB = {
     "L": (4,8192)
 }
 
-TM_MEM_MB = 4096  # Task Manager total process memory size in MB
-TM_JVM_OVERHEAD_MB = 512 # Task Manager JVM overhead memory size in MB
-TM_MM_PERCENT = 0.4 # default: fraction of flink process memory to managed (state) when not latency-tight
+TM_MEM_MB = 4096  # Default Task Manager total process memory size in MB (overridable per input)
 TM_PROCESS_MEMORY_MAX_MB = 64 * 1024  # ceiling for any single TaskManager process (MB)
 IN_FLIGHT_TO_BUFFER = 0.4  # fraction of in-flight (throughput*latency) attributed to TM network/buffer memory
 THROUGHPUT_BUFFER_K = 1.4  # MB per (MB/s per-TM) scaling for low-latency shuffles/serialization
-TM_vCPUs = 4
+
+# A "CP Flink node" is a normalized buy unit: a collection of 8 cores running CP Flink workloads.
+# The primary output is the aggregate cores of all CP Flink workloads (TaskManagers + JobManagers)
+# divided into 8-core nodes. Worker/VM nodes are a separate, shape-dependent bin-packing metric.
+CP_FLINK_NODE_CORES = 8
+
+# RocksDB keeps state on local NVMe disk. Raw state needs headroom for compaction, WAL, and SST
+# overlap during merges; size local disk at state_size x this factor.
+STATE_DISK_AMPLIFICATION = 1.5
+GIB = 1024 ** 3
 
 
-def _managed_memory_percent_by_latency(expected_latency_seconds: float) -> float:
+def _state_disk_gb(input_params: EstimationInput) -> tuple[float, int]:
     """
-    Tight latency → more of Flink process memory is not managed state (network buffers, heap, etc.),
-    so a smaller fraction is attributed to RocksDB / managed state for the same managed footprint.
-    """
-    if expected_latency_seconds <= 0.5:
-        return 0.32
-    if expected_latency_seconds <= 1.0:
-        return 0.35
-    if expected_latency_seconds < 5.0:
-        return 0.38
-    return TM_MM_PERCENT
+    Local NVMe disk required to hold keyed RocksDB state.
 
+    Under the EmbeddedRocksDBStateBackend (recommended default) state lives on the TaskManager's
+    local disk; only a bounded slice (Flink managed memory) is cached in RAM and that slice does
+    not scale with total state size. So state size is a *disk* requirement, not a RAM requirement.
 
-def _state_flink_process_memory_mb(input_params: EstimationInput) -> float:
-    """
-    The Flink Process Memory is computed from the managed memory as a percentage of it.
-    The managed memory is computed from the number of distinct keys, the number of medium and complex statements, the number of flink applications, and the average record size.
-    Finally latency may force to have memory use for network buffers so the percentage
-    is adapted when there is a need to tighten the latency.
     Args:
         input_params: The input parameters used for estimation
     Returns:
-        The total Flink Process Memory in MB
+        (state_size_gb, required_disk_gb) where required_disk_gb applies RocksDB compaction headroom.
     """
-    total_managed_memory_mb = math.ceil(
-        input_params.num_distinct_keys
-        * (input_params.medium_statements + input_params.complex_statements)
-        * input_params.number_flink_applications
-        * input_params.avg_record_size_bytes
-        / (1024 * 1024)
-    )
-    pct = _managed_memory_percent_by_latency(input_params.expected_latency_seconds)
-    return total_managed_memory_mb / pct
+    state_size_gb = input_params.state_size_bytes / GIB
+    required_disk_gb = math.ceil(state_size_gb * STATE_DISK_AMPLIFICATION)
+    return state_size_gb, required_disk_gb
 
 
 def _network_buffer_min_process_memory_mb(
@@ -203,137 +180,105 @@ def _per_tm_cap_mb(input_params: EstimationInput) -> int:
     return min(TM_PROCESS_MEMORY_MAX_MB, max(w - int(OS_MEM_MB), TM_MEM_MB))
 
 
-def _place_taskmanagers_with_node_growth(
-    input_params: EstimationInput,
-    jm_memory: int,
-    nb_taskmanagers: int,
-    tm_mem_mb: int,
-) -> tuple[int, list[int]]:
-    """
-    Places the task managers on the worker nodes with the most remaining memory that can still fit a TM.
-    Goal: keep the worker node count and memory math consistent with a real packing problem
-    Args:
-        input_params: The input parameters used for estimation
-        jm_memory: The memory needed for the job manager
-        nb_taskmanagers: The number of task managers to place
-        tm_mem_mb: The memory needed for each task manager
-    Returns:
-        The total memory needed and the allocation of the task managers on the worker nodes
-    """
-    required = nb_taskmanagers * tm_mem_mb
-    while True:
-        free_mem_per_node, total_free_mem = _assess_free_mem_per_node(input_params, jm_memory)
-        if not free_mem_per_node or max(free_mem_per_node) < tm_mem_mb:
-            raise ValueError(
-                f"No worker can host a {tm_mem_mb} MB task manager: "
-                f"max free memory on a node is {max(free_mem_per_node) if free_mem_per_node else 0} MB. "
-                "Increase worker_node_memory (or use a larger VM t-shirt) so each node can hold at least one TM."
-            )
-        if total_free_mem < required:
-            input_params.nb_worker_nodes += 1
-            continue
-        alloc, _mx, ok, _rem = _greedy_pack_taskmanagers(
-            free_mem_per_node, nb_taskmanagers, tm_mem_mb
-        )
-        if ok:
-            return jm_memory + required, alloc
-        logger.warning(
-            "Could not place %s task managers of %s MB; adding a worker node",
-            nb_taskmanagers,
-            tm_mem_mb,
-        )
-        input_params.nb_worker_nodes += 1
-
-
-def _resolve_tm_process_memory_mb(
+def _resolve_per_tm_memory_mb(
     input_params: EstimationInput,
     total_throughput_mb_per_sec: float,
-    raw_flink_process_mb: float,
-    nb_tm_state: int,
-    nb_tm_cpu: int,
-) -> tuple[int, int]:
+    nb_taskmanagers: int,
+) -> int:
     """
-    Computes the per-TM process memory size that balances state, throughput, and latency.
-    Goal: how much memory each Task Manager should get (P, in MB) and how many Task Managers (N) we need, when those two things depend on each other.
-    Args:
-        input_params: The input parameters used for estimation
-        total_throughput_mb_per_sec: The total throughput in MB per second
-        raw_flink_process_mb: The raw Flink process memory in MB
-        nb_tm_state: The number of task managers based on state
-        nb_tm_cpu: The number of task managers based on CPU
-    Returns:
-        The per-TM process memory size and the number of task managers
+    Per-TaskManager process memory: the configured ``mem_per_tm_mb`` baseline, raised by the
+    network/in-flight buffer heuristic when latency is tight, and capped at what fits on a worker.
+    State is NOT included here — under RocksDB it lives on local disk, not RAM.
     """
-    cap = _per_tm_cap_mb(input_params)  # don’t exceed _per_tm_cap_mb (fits on the worker shape
-    #  each TM must hold at least per_tm_state MB of Flink process memory
-    per_tm_state = math.ceil(max(TM_MEM_MB, raw_flink_process_mb) / max(1, nb_tm_state))
-    P = TM_MEM_MB
-    N = max(nb_tm_state, nb_tm_cpu)
-    for _ in range(12):
-        buffer_mb = _network_buffer_min_process_memory_mb(
-            input_params, total_throughput_mb_per_sec, N
+    cap = _per_tm_cap_mb(input_params)
+    buffer_mb = _network_buffer_min_process_memory_mb(
+        input_params, total_throughput_mb_per_sec, nb_taskmanagers
+    )
+    return int(min(cap, max(input_params.mem_per_tm_mb, buffer_mb)))
+
+
+def _pack_worker_nodes(
+    input_params: EstimationInput,
+    nb_taskmanagers: int,
+    per_tm_mem_mb: int,
+    jm_memory: int,
+    required_disk_gb: int,
+) -> dict:
+    """
+    Secondary metric: bin-pack TaskManager RAM and RocksDB local disk onto whole worker/VM nodes.
+    CPU does not constrain node count (cores are fractional and freely allocatable to TMs).
+
+    Returns a dict of packing facts used by both ResourceEstimates and SizingDiagnostics.
+    """
+    usable_ram_per_node = int(input_params.worker_node_memory_mb) - OS_MEM_MB
+    if usable_ram_per_node < per_tm_mem_mb:
+        raise ValueError(
+            f"A worker node has {usable_ram_per_node} MB usable RAM, too small for a "
+            f"{per_tm_mem_mb} MB TaskManager. Use a larger node shape or smaller mem_per_tm_mb."
         )
-        p_new = min(max(TM_MEM_MB, per_tm_state, buffer_mb), cap)
-        n_s2 = max(1, math.ceil(max(TM_MEM_MB, raw_flink_process_mb) / p_new))
-        n_new = max(n_s2, nb_tm_cpu)
-        if p_new == P and n_new == N:
-            return p_new, n_new
-        P, N = p_new, n_new
-    return P, N
+    tms_per_node = usable_ram_per_node // per_tm_mem_mb
+    stranded_ram = usable_ram_per_node - tms_per_node * per_tm_mem_mb
+
+    apps = max(1, input_params.number_flink_applications)
+    # Place TaskManagers whole (accounts for per-TM stranding), then fit JobManager memory into
+    # the RAM left unused on those nodes, adding nodes only if it does not fit.
+    nodes_for_tms = math.ceil(nb_taskmanagers / tms_per_node)
+    remaining_ram = nodes_for_tms * usable_ram_per_node - nb_taskmanagers * per_tm_mem_mb
+    jm_demand = jm_memory * apps
+    if jm_demand <= remaining_ram:
+        ram_nodes = nodes_for_tms
+    else:
+        ram_nodes = nodes_for_tms + math.ceil((jm_demand - remaining_ram) / usable_ram_per_node)
+    ram_nodes = max(1, ram_nodes)
+
+    disk_per_node = int(input_params.worker_node_disk_gb)
+    disk_nodes = math.ceil(required_disk_gb / disk_per_node) if required_disk_gb > 0 else 0
+
+    # Worker-node count is the actual RAM/disk packing need; the requested nb_worker_nodes is an
+    # informational echo on the summary, not a floor that forces over-provisioning.
+    worker_nodes = max(1, ram_nodes, disk_nodes)
+    if ram_nodes > disk_nodes:
+        bounding = "ram"
+    elif disk_nodes > ram_nodes:
+        bounding = "disk"
+    else:
+        bounding = "balanced"
+
+    ram_total_mb = nb_taskmanagers * per_tm_mem_mb + jm_memory * apps
+    return {
+        "worker_nodes": worker_nodes,
+        "ram_nodes": ram_nodes,
+        "disk_nodes": disk_nodes,
+        "tms_per_node": tms_per_node,
+        "stranded_ram_mb_per_node": stranded_ram,
+        "ram_total_mb": ram_total_mb,
+        "bounding": bounding,
+    }
 
 
 def _compute_sizing_diagnostics(
-    input_params: EstimationInput,
-    total_throughput_mb_per_sec: float,
-    raw_flink_process_mb: float,
-    nb_tm_state: int,
-    nb_tm_cpu: int,
-    nb_task_managers: int,
-    tm_process_memory_mb: int,
-    total_cpu_need_for_throughput: int,
+    tm_cores: float,
+    jm_cores: float,
+    nb_taskmanagers: int,
+    per_tm_mem_mb: int,
+    state_size_gb: float,
+    required_disk_gb: int,
+    packing: dict,
 ) -> SizingDiagnostics:
-    """
-    Compare state/memory vs throughput/CPU sizing paths and label the dominant constraint.
-    """
-    per_tm_state = math.ceil(
-        max(TM_MEM_MB, raw_flink_process_mb) / max(1, nb_tm_state)
-    )
-    buffer_mb = _network_buffer_min_process_memory_mb(
-        input_params, total_throughput_mb_per_sec, nb_task_managers
-    )
-    n_s2 = max(
-        1,
-        math.ceil(max(TM_MEM_MB, raw_flink_process_mb) / max(1, tm_process_memory_mb)),
-    )
-    if nb_tm_cpu > n_s2:
-        tm_count_bounding_factor = "cpu"
-    elif n_s2 > nb_tm_cpu:
-        tm_count_bounding_factor = "memory"
-    else:
-        tm_count_bounding_factor = "balanced"
-
-    tm_slots_cpu = nb_task_managers * TM_vCPUs
-    if total_cpu_need_for_throughput > tm_slots_cpu:
-        total_cpu_bounding_factor = "throughput"
-    else:
-        total_cpu_bounding_factor = "tm_slots"
-
-    if buffer_mb > TM_MEM_MB and buffer_mb > per_tm_state:
-        per_tm_memory_bounding_factor = "buffers"
-    elif raw_flink_process_mb > TM_MEM_MB or per_tm_state > TM_MEM_MB:
-        per_tm_memory_bounding_factor = "state"
-    else:
-        per_tm_memory_bounding_factor = "baseline"
-
+    """Surface the intermediate sizing values and which of RAM/disk bounds the worker-node count."""
     return SizingDiagnostics(
-        nb_tm_state=nb_tm_state,
-        nb_tm_cpu=nb_tm_cpu,
-        raw_flink_process_mb=round(raw_flink_process_mb, 2),
-        tm_process_memory_mb=tm_process_memory_mb,
-        buffer_mb=buffer_mb,
-        tm_count_bounding_factor=tm_count_bounding_factor,
-        total_cpu_bounding_factor=total_cpu_bounding_factor,
-        per_tm_memory_bounding_factor=per_tm_memory_bounding_factor,
+        tm_cores=round(tm_cores, 2),
+        jm_cores=round(jm_cores, 2),
+        nb_taskmanagers=nb_taskmanagers,
+        mem_per_tm_mb=per_tm_mem_mb,
+        ram_total_mb=int(packing["ram_total_mb"]),
+        state_size_gb=round(state_size_gb, 2),
+        required_disk_gb=required_disk_gb,
+        tms_per_node=int(packing["tms_per_node"]),
+        stranded_ram_mb_per_node=int(packing["stranded_ram_mb_per_node"]),
+        ram_nodes=int(packing["ram_nodes"]),
+        disk_nodes=int(packing["disk_nodes"]),
+        worker_node_bounding_factor=packing["bounding"],
     )
 
 
@@ -356,31 +301,31 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     input_params = _defaulting_input_params(input_params)
     logger.info("input_params: %s", input_params.model_dump_json(indent=2))
     total_throughput_mb_per_sec = input_params.total_throughput_mb_per_sec
+    apps = max(1, input_params.number_flink_applications)
     jm_cpu, jm_memory = _assess_jobmanager_size(input_params)
-    _, nb_tm_state, _, raw_flink = _assess_taskmanager_based_on_state(
-        input_params, jm_memory, TM_MEM_MB
+
+    # --- PRIMARY: cores ---------------------------------------------------------------
+    # CPU is throughput-driven (uncapped) for TaskManagers, plus JobManager cores. State does
+    # not add cores. Cores are fractional and freely allocatable to TaskManagers.
+    tm_cores = _throughput_cores(total_throughput_mb_per_sec, input_params)
+    jm_cores = jm_cpu * apps
+    total_cores = tm_cores + jm_cores
+    cp_flink_nodes = max(1, math.ceil(total_cores / CP_FLINK_NODE_CORES))
+    logger.info("tm_cores: %s, jm_cores: %s, total_cores: %s, cp_flink_nodes: %s",
+                tm_cores, jm_cores, total_cores, cp_flink_nodes)
+
+    # --- TaskManager shape ------------------------------------------------------------
+    nb_task_managers = max(1, math.ceil(tm_cores / input_params.cores_per_tm))
+    per_tm_mem_mb = _resolve_per_tm_memory_mb(
+        input_params, total_throughput_mb_per_sec, nb_task_managers
     )
 
-    nb_tm_cpu, total_cpu_need_for_throughput, nb_worker_nodes = _assess_taskmanager_based_on_throughput(
-        total_throughput_mb_per_sec, input_params, jm_cpu
+    # --- SECONDARY: state on local disk, RAM + disk bin-packed onto worker/VM nodes ----
+    state_size_gb, required_disk_gb = _state_disk_gb(input_params)
+    packing = _pack_worker_nodes(
+        input_params, nb_task_managers, per_tm_mem_mb, jm_memory, required_disk_gb
     )
-    logger.info("total_cpu_need_for_throughput: %s", total_cpu_need_for_throughput)
-    tm_process_memory_mb, nb_task_managers = _resolve_tm_process_memory_mb(
-        input_params,
-        total_throughput_mb_per_sec,
-        raw_flink,
-        nb_tm_state,
-        nb_tm_cpu,
-    )
-    # State, throughput, and per-TM slot drive CPU count
-    total_cpu_needs = max(total_cpu_need_for_throughput, nb_task_managers * TM_vCPUs)
-    total_memory_mb, node_allocations = _place_taskmanagers_with_node_growth(
-        input_params, jm_memory, nb_task_managers, tm_process_memory_mb
-    )
-    taskmanager_memory_mb = nb_task_managers * tm_process_memory_mb
-
-    non_zero_nodes = sum(1 for n in node_allocations if n > 0)
-    total_nodes = min(non_zero_nodes, nb_worker_nodes)
+    logger.info("packing: %s", packing)
 
     gbps = input_params.bandwidth_capacity_gbps
     bandwidth_mbps = int(round(gbps * 1000))
@@ -405,29 +350,30 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
     # Placeholder until processing_load is fully wired; matches scaling checkpoint heuristic seed.
     processing_load_score = 1.0
+    # Cores that physically come with the worker nodes provisioned for RAM/disk. Equals the compute
+    # need on a balanced shape, but exceeds it when a RAM/disk-light shape forces extra nodes.
+    provisioned_cores = packing["worker_nodes"] * int(input_params.worker_node_cpu_max)
     resource_estimates = ResourceEstimates(
-        total_memory_mb=math.ceil(total_memory_mb),
-        total_cpus=math.ceil(total_cpu_needs),
-        total_worker_node_needed=math.ceil(total_nodes),
+        cp_flink_nodes=cp_flink_nodes,
+        total_cpus=math.ceil(total_cores),
+        provisioned_cores=provisioned_cores,
+        total_memory_mb=int(packing["ram_total_mb"]),
+        total_disk_gb=required_disk_gb,
+        total_worker_node_needed=packing["worker_nodes"],
         processing_load_score=processing_load_score,
     )
 
     jobmanager_config = JobManagerConfig(
-        count=max(1, input_params.number_flink_applications),
+        count=apps,
         memory_mb=math.ceil(jm_memory),
         total_cpus=float(jm_cpu),
     )
 
-
-    tm_total_mem = math.ceil(taskmanager_memory_mb)
-    memory_gb_each = (
-        round((tm_total_mem / nb_task_managers),0) if nb_task_managers else 0.0
-    )
     taskmanager_config = TaskManagerConfig(
         count=nb_task_managers,
-        total_memory_mb=tm_total_mem,
-        total_cpus=math.ceil(total_cpu_needs - jm_cpu),
-        memory_mb_each=memory_gb_each,
+        total_memory_mb=nb_task_managers * per_tm_mem_mb,
+        total_cpus=math.ceil(tm_cores),
+        memory_mb_each=float(per_tm_mem_mb),
     )
 
     cluster_recommendations = ClusterRecommendations(
@@ -442,18 +388,17 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
     )
 
     capacity_analysis = CapacityAnalysis(
-        total_flink_statements = input_params.total_statements * input_params.number_flink_applications,
-        total_flink_applications = input_params.number_flink_applications
+        total_flink_statements = input_params.total_statements * apps,
+        total_flink_applications = apps
     )
     sizing_diagnostics = _compute_sizing_diagnostics(
-        input_params,
-        total_throughput_mb_per_sec,
-        raw_flink,
-        nb_tm_state,
-        nb_tm_cpu,
+        tm_cores,
+        jm_cores,
         nb_task_managers,
-        tm_process_memory_mb,
-        total_cpu_need_for_throughput,
+        per_tm_mem_mb,
+        state_size_gb,
+        required_disk_gb,
+        packing,
     )
     result = EstimationResult(
         input_summary=input_summary,
@@ -473,13 +418,13 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
 
 def _latency_cpu_factor(expected_latency_seconds: float) -> float:
-    if expected_latency_seconds <= 0.5:
-        return 1.5
-    if expected_latency_seconds <= 1.0:
+    if expected_latency_seconds <= 0.7:
         return 1.2
-    if expected_latency_seconds < 5.0:
+    if expected_latency_seconds < 1.0:
         return 1.1
-    return 1.0
+    if expected_latency_seconds <= 5.0:
+        return .7
+    return .7
 
 
 def _assess_jobmanager_size(input_params: EstimationInput) -> tuple[int, int]:
@@ -490,78 +435,6 @@ def _assess_jobmanager_size(input_params: EstimationInput) -> tuple[int, int]:
     else:
         jm_tshirt_size ='L'
     return JM_TSHIRT_CPU_MB[jm_tshirt_size][0], JM_TSHIRT_CPU_MB[jm_tshirt_size][1]
-
-
-def _greedy_pack_taskmanagers(
-    free_mem_per_node: list[int],
-    nb_taskmanagers: int,
-    tm_mem_mb: int,
-) -> tuple[list[int], int, bool, list[int]]:
-    """
-    Place nb_taskmanagers TMs, each using tm_mem_mb, on the worker with the most
-    remaining memory that can still fit a TM. Tie-break: lower node index.
-
-    Returns:
-        allocations: TMs per worker node (len == number of nodes)
-        max_on_a_node: max TMs on any single node after packing
-        success: True if all TMs were placed
-    """
-    n = len(free_mem_per_node)
-    alloc: list[int] = [0] * n
-    remaining = list(free_mem_per_node)
-    for _ in range(nb_taskmanagers):
-        best_i = -1
-        best_rem = -1
-        for i in range(n):
-            r = remaining[i]
-            if r >= tm_mem_mb and r > best_rem:
-                best_rem = r
-                best_i = i
-        if best_i < 0:
-            return alloc, (max(alloc) if alloc else 0), False, remaining
-        remaining[best_i] -= tm_mem_mb
-        alloc[best_i] += 1
-    return alloc, max(alloc), True, remaining
-
-
-def _assess_taskmanager_based_on_state(
-    input_params: EstimationInput, jm_memory: int, tm_mem_mb: int = TM_MEM_MB
-) -> tuple[int, int, list[int], float]:
-    """
-    State-sized Flink process memory and worker placement for a given TaskManager process size.
-    Returns total memory (JM + provisioned TMs), TM count, per-node allocation, and raw process MB.
-    """
-    raw = _state_flink_process_memory_mb(input_params)
-    total_flink = max(TM_MEM_MB, raw)
-    logger.info("total_flink_process_mem (raw): %s MB", raw)
-    nb_taskmanagers = max(1, math.ceil(total_flink / tm_mem_mb))
-    logger.info("jm_memory: %s MB, nb_taskmanagers (state pass): %s", jm_memory, nb_taskmanagers)
-    total_mem_needed_mb, tm_allocations_wnodes = _place_taskmanagers_with_node_growth(
-        input_params, jm_memory, nb_taskmanagers, tm_mem_mb
-    )
-    tm_allocations_wnodes = [math.ceil(n) for n in tm_allocations_wnodes]
-    max_tm = max(tm_allocations_wnodes) if tm_allocations_wnodes else 0
-    logger.info("total_mem_needed_mb: %s MB", total_mem_needed_mb)
-    logger.info("nb_taskmanagers: %s", nb_taskmanagers)
-    logger.info("tm_allocations_wnodes: %s", tm_allocations_wnodes)
-    logger.info("max_tm_per_node (largest count on one node): %s", max_tm)
-    return total_mem_needed_mb, nb_taskmanagers, tm_allocations_wnodes, raw
-
-def _assess_free_mem_per_node(input_params: EstimationInput, jm_memory: int) -> tuple[list[int], int]:
-    """
-    """
-    free_mem_per_node = []
-    total_free_mem = 0
-    for wnode in range(input_params.nb_worker_nodes):
-         free_mem_per_node.append(input_params.worker_node_memory_mb - OS_MEM_MB)
-         total_free_mem += free_mem_per_node[wnode]
-    free_mem_per_node[0] = free_mem_per_node[0] - jm_memory * input_params.number_flink_applications
-    total_free_mem = total_free_mem - jm_memory * input_params.number_flink_applications
-    logger.info("free_mem_per_node: %s MB", free_mem_per_node)
-    logger.info("total_free_mem: %s MB", total_free_mem)
-    return free_mem_per_node, total_free_mem
-
-
 
 
 def _compute_scaling_recommendations(
@@ -620,55 +493,42 @@ def _compute_scaling_recommendations(
     )
 
 
-def _assess_taskmanager_based_on_throughput(total_throughput_mb_per_sec, input_params: EstimationInput, jm_cpu: int) -> tuple[int, int, int]:  
+def _throughput_cores(total_throughput_mb_per_sec: float, input_params: EstimationInput) -> float:
     """
-    Assess the number of CPU cores needed based on the total throughput and the expected latency.
-    Args:
-        total_throughput_mb_per_sec: The total throughput in MB per second
-        input_params: The input parameters used for estimation
-        jm_cpu: The number of CPU cores needed for the job manager
-    Returns:
-        total_cpu_needs: The total number of CPU cores needed
-        nb_worker_nodes: The number of worker nodes needed
-    """
-    simple_throughput_mbps = SIMPLE_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    simple_statement_cpu_needs = min(TM_vCPUs,  total_throughput_mb_per_sec / simple_throughput_mbps) * input_params.simple_statements
-    
-    medium_throughput_mbps = MEDIUM_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    medium_statement_cpu_needs = min(TM_vCPUs, total_throughput_mb_per_sec /  medium_throughput_mbps) * input_params.medium_statements
-    
-    complex_throughput_mbps = COMPLEX_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
-    complex_statement_cpu_needs = min(TM_vCPUs,  total_throughput_mb_per_sec/ complex_throughput_mbps) * input_params.complex_statements
-    
-    total_cpu_needs = math.ceil((simple_statement_cpu_needs + medium_statement_cpu_needs + complex_statement_cpu_needs) 
-                     * _latency_cpu_factor(input_params.expected_latency_seconds)
-                      + jm_cpu) * input_params.number_flink_applications
+    Cores to process the throughput, summed per statement type and scaled by the latency factor
+    and number of applications.
 
-    nb_worker_nodes = input_params.nb_worker_nodes
-    if input_params.worker_node_type == "VM" and input_params.worker_node_t_size is not None:
-        cores_per_node = VM_TSHIRT_MB_CPU[input_params.worker_node_t_size][1]
-    else:
-        cores_per_node = input_params.worker_node_cpu_max
-    while True:
-        cpu_capacity_cross_nodes = nb_worker_nodes * cores_per_node
-        if cpu_capacity_cross_nodes >= total_cpu_needs:
-            break
-        nb_worker_nodes += 1
-    nb_task_managers = math.ceil((total_cpu_needs - jm_cpu) / TM_vCPUs)
-    logger.info("simple_statement_cpu_needs: %s for %s MB/s", simple_statement_cpu_needs, simple_throughput_mbps    )
-    logger.info("medium_statement_cpu_needs: %s for %s MB/s", medium_statement_cpu_needs, medium_throughput_mbps)
-    logger.info("complex_statement_cpu_needs: %s for %s MB/s", complex_statement_cpu_needs, complex_throughput_mbps)
-    logger.info("total_cpu_needs: %s", total_cpu_needs)
-    logger.info("nb_worker_nodes: %s", nb_worker_nodes)
-    logger.info("nb_task_managers: %s", nb_task_managers)
-    return nb_task_managers, total_cpu_needs, nb_worker_nodes
+    No per-statement core cap: a statement is parallelized across many TaskManagers/slots, so its
+    CPU need scales with throughput. The real ceiling is distinct-key count / maxParallelism, not
+    cores-per-TM; that bound is not modeled here.
+    """
+    simple_mbps = SIMPLE_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
+    medium_mbps = MEDIUM_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
+    complex_mbps = COMPLEX_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
+
+    simple_cores = (total_throughput_mb_per_sec / simple_mbps) * input_params.simple_statements
+    medium_cores = (total_throughput_mb_per_sec / medium_mbps) * input_params.medium_statements
+    complex_cores = (total_throughput_mb_per_sec / complex_mbps) * input_params.complex_statements
+
+    cores = (
+        (simple_cores + medium_cores + complex_cores)
+        * _latency_cpu_factor(input_params.expected_latency_seconds)
+        * max(1, input_params.number_flink_applications)
+    )
+    logger.info(
+        "throughput cores simple=%.2f medium=%.2f complex=%.2f total=%.2f",
+        simple_cores, medium_cores, complex_cores, cores,
+    )
+    return cores
 
 
 
 def _defaulting_input_params(input_params: EstimationInput) -> EstimationInput:
     if input_params.worker_node_type == "VM":
-        input_params.worker_node_memory_mb = VM_TSHIRT_MB_CPU[input_params.worker_node_t_size][0]
-        input_params.worker_node_cpu_max = VM_TSHIRT_MB_CPU[input_params.worker_node_t_size][1]
+        mem_mb, cpus, disk_gb = VM_TSHIRT_MB_CPU[input_params.worker_node_t_size]
+        input_params.worker_node_memory_mb = mem_mb
+        input_params.worker_node_cpu_max = cpus
+        input_params.worker_node_disk_gb = disk_gb
 
     return input_params
 

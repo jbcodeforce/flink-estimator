@@ -38,42 +38,22 @@ uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ## Using the web UI
 
 - **Home (`/`)** — same actions as the three cards: new estimation, saved files, and **Estimation Guide** (`/considerations`), which explains assumptions, baseline rules, and a TaskManager memory map
-- **Configure (`/estimation-form`)** — use the three tabs, then **Calculate Resource Estimates**; you can use **Save Configuration** on the form to persist inputs (via `/save-estimation`) before or alongside a full run
-- **Results (`POST /estimate`)** — use **Edit parameters and re-estimate** to return to the form with current values; **Save to JSON** stores the full input + result under `saved_estimations/` (relative to the process working directory, typically `src/saved_estimations` when you start the app from `src/`)
+- **Configure (`/estimation-form`)** — use the three tabs, then **Calculate Resource Estimates**; you can use **Save Configuration** on the form to persist inputs via **`POST /api/save-estimation`** before or alongside a full run
+- **Results (`POST /estimate`)** — use **Edit parameters and re-estimate** to return to the form with current values; **Save to JSON** stores the full input + result under `saved_estimations/` via **`POST /api/save-estimation`**
 - **Saved (`/saved`)** — manage files; open a file’s result view via **Reload** (see `GET /reload/{filename}` below)
 
 ## API overview
 
-- **POST `/api/estimate`** — JSON body: `EstimationInput` (all fields; VM workers require `worker_node_t_size` `S` / `M` / `L`)
-- **GET `/api/estimate`** — same parameters as query strings (e.g. for quick checks with `curl`)
-- **POST `/api/save-estimation`** or **POST `/save-estimation`** — run an estimate and save JSON
-- **GET `/saved-estimations`** — list saved files and metadata
-- **GET `/download/{filename}`** — download a saved JSON
-- **DELETE `/delete-estimation/{filename}`** — remove a saved file
+All programmatic and browser AJAX operations use **`/api/*`**. HTML page navigation uses paths without that prefix.
 
-Example **POST** (bare-metal workers; extend or adjust fields to match your scenario):
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/estimate` | Calculate estimation (JSON `EstimationInput` body) |
+| POST | `/api/save-estimation` | Save JSON; body is `{ "input_parameters": {...}, "estimation_results": {...}? }` — omit `estimation_results` to recalculate |
+| GET | `/api/saved-estimations` | List saved files and metadata |
+| GET | `/api/download/{filename}` | Download a saved JSON |
+| DELETE | `/api/delete-estimation/{filename}` | Remove a saved file |
 
-```bash
-curl -s -X POST "http://localhost:8000/api/estimate" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_name": "Demo",
-    "messages_per_second": 10000,
-    "avg_record_size_bytes": 1024,
-    "number_flink_applications": 1,
-    "num_distinct_keys": 100000,
-    "data_skew_risk": "low",
-    "bandwidth_capacity_gbps": 10,
-    "expected_latency_seconds": 5.0,
-    "simple_statements": 2,
-    "medium_statements": 1,
-    "complex_statements": 1,
-    "nb_worker_nodes": 3,
-    "worker_node_type": "bare_metal",
-    "worker_node_memory_mb": 16384,
-    "worker_node_cpu_max": 8
-  }'
-```
 
 For a full list of fields, defaults, and validation rules, use `/docs` or the Pydantic models in code.
 
@@ -84,7 +64,7 @@ For a full list of fields, defaults, and validation rules, use `/docs` or the Py
 | GET | `/` | Home / dashboard |
 | GET | `/estimation-form` | Tabbed form (query string can prefill fields) |
 | GET | `/considerations` | Estimation Guide |
-| GET | `/saved` | Saved files UI |
+| GET | `/saved` | Saved files UI (loads data via `/api/saved-estimations`) |
 | POST | `/estimate` | Submit form → results page |
 | GET | `/reload/{filename}` | Open a saved estimation as the results view |
 

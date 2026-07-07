@@ -58,7 +58,7 @@
         emptyMessage.style.display = 'none';
         
         try {
-            const response = await fetch('/saved-estimations');
+            const response = await fetch('/api/saved-estimations');
             const result = await response.json();
             
             if (result.success && result.files.length > 0) {
@@ -152,7 +152,7 @@
     }
 
     function downloadFile(filename) {
-        window.open(`/download/${filename}`, '_blank');
+        window.open(`/api/download/${filename}`, '_blank');
     }
 
     async function deleteEstimation(filename) {
@@ -161,7 +161,7 @@
         }
         
         try {
-            const response = await fetch(`/delete-estimation/${filename}`, {
+            const response = await fetch(`/api/delete-estimation/${filename}`, {
                 method: 'DELETE'
             });
             
@@ -203,7 +203,7 @@
 
     async function viewFileContent(filename) {
         try {
-            const response = await fetch(`/download/${filename}`);
+            const response = await fetch(`/api/download/${filename}`);
             const data = await response.json();
             
             // Create a modal or new window to display the JSON content
