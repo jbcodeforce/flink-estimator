@@ -57,26 +57,46 @@
         </div>
         {% set jm = estimation.cluster_recommendations.jobmanager %}
         {% set tm = estimation.cluster_recommendations.taskmanagers %}
-        {% set tm_memory_mb = tm.total_memory_mb %}
         {% set tm_cpu_each = (tm.total_cpus + tm.count - 1) // tm.count if tm.count else 0 %}
         <!-- Resource Estimates -->
         <div class="result-section">
             <h2>Full Resource Estimates</h2>
             <div class="scaling-grid">
                 <div class="resource-card">
-                    <h3>Total Memory</h3>
-                    <div class="resource-value">{{ "{:,}".format(estimation.resource_estimates.total_memory_mb) }} MB</div>
-                    <div class="resource-subtext">{{ "%.2f"|format(estimation.resource_estimates.total_memory_mb / 1024) }} GB</div>
+                    <h3>CP Flink Nodes</h3>
+                    <div class="resource-value">{{ estimation.resource_estimates.cp_flink_nodes }}</div>
+                    <div class="resource-subtext">Primary buy unit — 8 cores each (⌈{{ estimation.resource_estimates.total_cpus }} cores / 8⌉)</div>
                 </div>
                 <div class="resource-card">
                     <h3>Total CPU Cores</h3>
                     <div class="resource-value">{{ estimation.resource_estimates.total_cpus }}</div>
-                    <div class="resource-subtext">Recommended cores</div>
+                    <div class="resource-subtext">TaskManagers + JobManagers</div>
                 </div>
                 <div class="resource-card">
-                    <h3>Total Nodes</h3>
+                    <h3>Total Memory</h3>
+                    <div class="resource-value">{{ "{:,}".format(estimation.resource_estimates.total_memory_mb) }} MB</div>
+                    <div class="resource-subtext">{{ "%.2f"|format(estimation.resource_estimates.total_memory_mb / 1024) }} GB process RAM</div>
+                </div>
+                <div class="resource-card">
+                    <h3>Local Disk (state)</h3>
+                    <div class="resource-value">{{ "{:,}".format(estimation.resource_estimates.total_disk_gb) }} GB</div>
+                    <div class="resource-subtext">RocksDB NVMe incl. compaction headroom</div>
+                </div>
+                <div class="resource-card">
+                    <h3>Worker / VM Nodes</h3>
                     <div class="resource-value">{{ estimation.resource_estimates.total_worker_node_needed }}</div>
-                    <div class="resource-subtext">Recommended cores</div>
+                    <div class="resource-subtext">Secondary — RAM/disk bin-packing</div>
+                </div>
+                <div class="resource-card">
+                    <h3>Provisioned Cores</h3>
+                    <div class="resource-value">{{ estimation.resource_estimates.provisioned_cores }}</div>
+                    {% if estimation.resource_estimates.provisioned_cores > estimation.resource_estimates.total_cpus %}
+                    <div class="resource-subtext">Nodes × cores/node — {{ estimation.resource_estimates.provisioned_cores - estimation.resource_estimates.total_cpus }} cores beyond the {{ estimation.resource_estimates.total_cpus }} the workload needs (RAM/disk packing drives node count)</div>
+                    {% elif estimation.resource_estimates.provisioned_cores < estimation.resource_estimates.total_cpus %}
+                    <div class="resource-subtext">⚠️ Only {{ estimation.resource_estimates.provisioned_cores }} of the {{ estimation.resource_estimates.total_cpus }} cores the workload needs — legacy estimate; re-run it to size a fleet that covers the compute need</div>
+                    {% else %}
+                    <div class="resource-subtext">Nodes × cores/node — matches the compute need</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -85,50 +105,38 @@
         {% set diag = estimation.sizing_diagnostics %}
         <div class="result-section">
             <h2>Sizing Diagnostics</h2>
-            <p class="section-hint">Which constraint drives TaskManager count, total CPU, and per-TM memory.</p>
+            <p class="section-hint">CPU drives the CP Flink node count; CPU, RAM, and local disk each independently floor the worker/VM node count.</p>
             <div class="scaling-grid bounding-grid">
                 <div class="bounding-card">
-                    <h4>TaskManager count</h4>
-                    <div class="bounding-badge bounding-{{ diag.tm_count_bounding_factor }}">
-                        {% if diag.tm_count_bounding_factor == 'cpu' %}
-                        CPU bound (throughput)
-                        {% elif diag.tm_count_bounding_factor == 'memory' %}
-                        Memory bound (state)
+                    <h4>Cores (CP Flink nodes)</h4>
+                    <div class="bounding-badge bounding-cpu">Throughput driven</div>
+                    <div class="bounding-detail">{{ "%.2f"|format(diag.tm_cores) }} TM cores + {{ "%.0f"|format(diag.jm_cores) }} JM cores · {{ diag.nb_taskmanagers }} TaskManagers</div>
+                </div>
+                <div class="bounding-card">
+                    <h4>Worker / VM nodes</h4>
+                    <div class="bounding-badge bounding-{{ diag.worker_node_bounding_factor }}">
+                        {% if diag.worker_node_bounding_factor == 'disk' %}
+                        Local disk bound
+                        {% elif diag.worker_node_bounding_factor == 'ram' %}
+                        RAM bound
+                        {% elif diag.worker_node_bounding_factor == 'cpu' %}
+                        CPU bound
                         {% else %}
                         Balanced
                         {% endif %}
                     </div>
-                    <div class="bounding-detail">State pass: {{ diag.nb_tm_state }} TM · CPU pass: {{ diag.nb_tm_cpu }} TM</div>
+                    <div class="bounding-detail">CPU: {{ diag.cpu_nodes }} · RAM: {{ diag.ram_nodes }} · Disk: {{ diag.disk_nodes }} nodes</div>
                 </div>
                 <div class="bounding-card">
-                    <h4>Total CPU</h4>
-                    <div class="bounding-badge bounding-{{ diag.total_cpu_bounding_factor }}">
-                        {% if diag.total_cpu_bounding_factor == 'throughput' %}
-                        Throughput bound
-                        {% else %}
-                        TM slot bound
-                        {% endif %}
-                    </div>
-                    <div class="bounding-detail">Statement throughput vs {{ tm.count }} × 4 vCPU slots</div>
-                </div>
-                <div class="bounding-card">
-                    <h4>Per-TM memory</h4>
-                    <div class="bounding-badge bounding-{{ diag.per_tm_memory_bounding_factor }}">
-                        {% if diag.per_tm_memory_bounding_factor == 'state' %}
-                        State bound
-                        {% elif diag.per_tm_memory_bounding_factor == 'buffers' %}
-                        Buffer bound
-                        {% else %}
-                        Baseline (4 GB)
-                        {% endif %}
-                    </div>
-                    <div class="bounding-detail">{{ "{:,.0f}".format(diag.tm_process_memory_mb) }} MB TM · {{ diag.buffer_mb }} MB buffer heuristic</div>
+                    <h4>Per-TM packing</h4>
+                    <div class="bounding-badge">{{ "{:,.0f}".format(diag.mem_per_tm_mb) }} MB / TM</div>
+                    <div class="bounding-detail">{{ diag.tms_per_node }} TM/node · {{ "{:,}".format(diag.stranded_ram_mb_per_node) }} MB stranded/node</div>
                 </div>
             </div>
             <div class="diagnostics-raw">
                 <div class="summary-item">
-                    <span class="label">Raw Flink process memory:</span>
-                    <span class="value">{{ "{:,.2f}".format(diag.raw_flink_process_mb) }} MB</span>
+                    <span class="label">Keyed state size:</span>
+                    <span class="value">{{ "{:,.2f}".format(diag.state_size_gb) }} GB → {{ "{:,}".format(diag.required_disk_gb) }} GB on disk (×1.5 headroom)</span>
                 </div>
             </div>
         </div>
@@ -166,7 +174,7 @@
                         </div>
                         <div class="config-item">
                             <span class="config-label">Memory per TM:</span>
-                            <span class="config-value">{{ "{:,}".format(tm_memory_mb) }} MB ({{ tm.memory_mb_each }} MB)</span>
+                            <span class="config-value">{{ "{:,.0f}".format(tm.memory_mb_each) }} MB</span>
                         </div>
                         <div class="config-item">
                             <span class="config-label">Total Memory:</span>
@@ -215,7 +223,7 @@
 jobmanager.memory.process.size: {{ estimation.cluster_recommendations.jobmanager.memory_mb }}m
 
 # TaskManager
-taskmanager.memory.process.size: {{ tm_memory_mb }}m
+taskmanager.memory.process.size: {{ "%.0f"|format(tm.memory_mb_each) }}m
 taskmanager.numberOfTaskSlots: {{ tm_cpu_each }}
 
 # Checkpointing
