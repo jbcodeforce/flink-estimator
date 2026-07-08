@@ -263,14 +263,8 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
 </div>
 
 {% if success %}
-<!-- Hidden form for saving estimation -->
-<form id="saveForm" style="display: none;" action="/save-estimation" method="post">
-    {% if prefill is not none %}
-    {% for key, val in prefill.items() %}
-    <input type="hidden" name="{{ key }}" value="{{ val if val is not none else '' }}">
-    {% endfor %}
-    {% endif %}
-</form>
+<script type="application/json" id="input-parameters-data">{{ input_params.model_dump() | tojson }}</script>
+<script type="application/json" id="estimation-result-data">{{ estimation.model_dump() | tojson }}</script>
 {% endif %}
 {% endblock %}
 
@@ -313,11 +307,19 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
         saveBtn.disabled = true;
         
         try {
-            const formData = new FormData(document.getElementById('saveForm'));
-            
-            const response = await fetch('/save-estimation', {
+            const payload = {
+                input_parameters: JSON.parse(
+                    document.getElementById('input-parameters-data').textContent
+                ),
+                estimation_results: JSON.parse(
+                    document.getElementById('estimation-result-data').textContent
+                ),
+            };
+
+            const response = await fetch('/api/save-estimation', {
                 method: 'POST',
-                body: formData
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
             });
             
             const result = await response.json();
@@ -330,7 +332,7 @@ parallelism.default: {{ estimation.scaling_recommendations.recommended_paralleli
                 // Show download option
                 setTimeout(() => {
                     if (confirm(`Estimation saved as ${result.filename}. Would you like to download it?`)) {
-                        window.open(`/download/${result.filename}`, '_blank');
+                        window.open(`/api/download/${result.filename}`, '_blank');
                     }
                 }, 500);
                 

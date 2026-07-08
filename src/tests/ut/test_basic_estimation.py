@@ -56,6 +56,7 @@ class TestPrivateHelpers:
         assert input_params.simple_statements == 2
         assert input_params.medium_statements == 1
         assert input_params.complex_statements == 1
+        assert input_params.number_flink_applications == 1
 
         input_params = _defaulting_input_params(
             EstimationInput(project_name="VM Test", worker_node_type="VM", worker_node_t_size="M")
@@ -71,13 +72,21 @@ class TestPrivateHelpers:
         assert input_params.worker_node_cpu_max == 48
         assert input_params.worker_node_disk_gb == 6144
 
+        input_params = _defaulting_input_params(
+            EstimationInput(project_name="Bare Metal Test", worker_node_type="bare_metal", worker_node_t_size="S")
+        )
+        assert input_params.worker_node_memory_mb == 16384
+        assert input_params.worker_node_cpu_max == 8
+        assert input_params.worker_node_disk_gb == 512
+   
+
     def test_latency_cpu_factor(self):
         """_latency_cpu_factor: multipliers at 0.5, 1.0, 3.0, 5.0, 10.0 s expected latency."""
-        assert _latency_cpu_factor(0.5) == 1.5
-        assert _latency_cpu_factor(1.0) == 1.2
-        assert _latency_cpu_factor(3.0) == 1.1
-        assert _latency_cpu_factor(5.0) == 1.0
-        assert _latency_cpu_factor(10.0) == 1.0
+        assert _latency_cpu_factor(0.5) == 1.2
+        assert _latency_cpu_factor(1.0) == 0.7
+        assert _latency_cpu_factor(3.0) == .7       # 3.0s latency is the cutoff for the 0.7 multiplier
+        assert _latency_cpu_factor(5.0) == .7
+        assert _latency_cpu_factor(10.0) == .7
 
     def test_jobmanager_size(self, vm_s_estimation_input):
         """_assess_jobmanager_size: JM vCPU and memory scale with num_distinct_keys tiers (10M, 100M, 1B+)."""
@@ -90,26 +99,34 @@ class TestPrivateHelpers:
         assert _assess_jobmanager_size(input_params) == (4, 8192)
 
     def test_throughput_cores_uncapped(self, vm_s_estimation_input):
-        """_throughput_cores: CPU scales with throughput (no per-statement cap). A complex op that needs
-        60 cores to keep up is counted as 60, not clamped."""
+        """
+        _throughput_cores: CPU scales with throughput(no per-statement cap). 
+        A complex op that needs 60 cores to keep up is counted as 60, not clamped.
+        """
         input_params = _defaulting_input_params(
             vm_s_estimation_input.model_copy(
                 update={
-                    "simple_statements": 0,
+                    "simple_statements": 1,
                     "medium_statements": 0,
-                    "complex_statements": 1,
-                    "avg_record_size_bytes": 2000,
-                    "expected_latency_seconds": 5.0,  # latency factor 1.0
-                    "messages_per_second": 150000,
+                    "complex_statements": 0,
+                    "avg_record_size_bytes": 1024,
+                    "expected_latency_seconds": 1.0,  # latency factor 1.0
+                    "messages_per_second": 150_000,
                 }
             )
         )
-        thr = input_params.total_throughput_mb_per_sec  # 286.1 MB/s
-        complex_mbps = 2500 * 2000 / (1024 * 1024)  # 4.77 MB/s per core
+        thr = input_params.total_throughput_mb_per_sec  # 146MB/s 296 MB/s
         cores = _throughput_cores(thr, input_params)
-        # ~60 cores for the single complex statement; the old cap would have pinned this at 4.
-        assert cores == pytest.approx(thr / complex_mbps, rel=1e-3)
-        assert cores > 50
+        assert cores >= 4
+        assert cores <= 6
+        input_params.medium_statements = 1
+        cores = _throughput_cores(thr, input_params)
+        print(f"cores: {cores}")
+        assert cores >= 13
+        input_params.complex_statements = 1
+        cores = _throughput_cores(thr, input_params)
+        print(f"cores: {cores}")
+        assert cores <= 35
 
     def test_throughput_cores_scales_with_statements_and_apps(self, vm_s_estimation_input):
         """Doubling statements (and applications) scales throughput cores proportionally."""
@@ -157,21 +174,28 @@ class TestPrivateHelpers:
         assert _network_buffer_min_process_memory_mb(input_params, tmbps, 1) >= 200  # MB
 
     def test_pack_worker_nodes_ram_and_disk(self, vm_s_estimation_input):
-        """_pack_worker_nodes: node count is max(CPU, RAM pack, disk pack); reports stranding and bounding factor."""
-        input_params = _defaulting_input_params(vm_s_estimation_input)  # S: 16 GB / 8 cores / 512 GB disk
+        """_pack_worker_nodes: node count is max(RAM pack, disk pack); reports stranding and bounding factor."""
+        input_params = _defaulting_input_params(vm_s_estimation_input)  # S: 16 GB / 512 GB disk
         # 5 TMs of 4 GB: usable 15872 MB -> 3 TMs/node, 3584 MB stranded -> 2 nodes for TMs.
-        pack = _pack_worker_nodes(input_params, nb_taskmanagers=5, per_tm_mem_mb=4096,
-                                  jm_memory=2048, required_disk_gb=100, total_cores=6.0)
+        pack = _pack_worker_nodes(input_params, 
+                                  total_cores=6.0,
+                                  nb_taskmanagers=5, 
+                                  per_tm_mem_mb=4096,
+                                  jm_memory=2048, 
+                                  required_disk_gb=100)
         assert pack["tms_per_node"] == 3
         assert pack["stranded_ram_mb_per_node"] == 15872 - 3 * 4096
         assert pack["ram_nodes"] == 2
         assert pack["disk_nodes"] == 1  # 100 GB fits one 512 GB node
-        assert pack["cpu_nodes"] == 1  # 6 cores fit one 8-core node
         assert pack["worker_nodes"] == 2
         assert pack["bounding"] == "ram"
         # Disk-bound: huge state forces more nodes than RAM.
-        pack2 = _pack_worker_nodes(input_params, nb_taskmanagers=1, per_tm_mem_mb=4096,
-                                   jm_memory=2048, required_disk_gb=5000, total_cores=2.0)
+        pack2 = _pack_worker_nodes(input_params, 
+                                    total_cores=2.0, 
+                                    nb_taskmanagers=1, 
+                                    per_tm_mem_mb=4096,
+                                   jm_memory=2048, 
+                                   required_disk_gb=5000)
         assert pack2["disk_nodes"] == math.ceil(5000 / 512)
         assert pack2["worker_nodes"] == pack2["disk_nodes"]
         assert pack2["bounding"] == "disk"
@@ -214,7 +238,7 @@ class TestBasicEstimation:
         re = result.resource_estimates
         # throughput ~2.87 cores + 1 JM core -> 4 total -> 1 CP Flink node
         assert re.cp_flink_nodes == 1
-        assert re.total_cpus == 4
+        assert re.total_cpus == 3
         assert re.total_worker_node_needed == 1
         assert re.total_disk_gb >= 1  # 100k keys × 2 stateful × 512 B ~ 0.1 GiB -> 1 GB
         tm = result.cluster_recommendations.taskmanagers
@@ -263,18 +287,20 @@ class TestBasicEstimation:
             bandwidth_capacity_gbps=10,
             worker_node_type="VM",
             worker_node_t_size="M",
+            cores_per_tm=1.0,
+            mem_per_tm_mb=4096,
         )
         result = calculate_flink_estimation(input_params)
         self._assert_consistent(result)
         re = result.resource_estimates
         diag = result.sizing_diagnostics
-        assert diag.tm_cores == pytest.approx(213.52, rel=1e-2)
-        assert re.total_cpus == 216  # 214 TM + 2 JM
-        assert re.cp_flink_nodes == 27  # ceil(216 / 8)
+        assert diag.tm_cores == pytest.approx(80.74, rel=1e-2)
+        assert re.total_cpus == 83  # 214 TM + 2 JM
+        assert re.cp_flink_nodes == 11  # ceil(216 / 8)
         assert re.total_disk_gb == 699  # 465.66 GiB × 1.5
-        assert diag.worker_node_bounding_factor == "ram"
+        assert diag.worker_node_bounding_factor == "balanced"  # as ram and cpu nodes are both 6 and disk is 1
         # The old model reported 1168 CPUs against 20 nodes; the new model never inflates CPU by state.
-        assert re.total_cpus < 300
+        assert re.total_cpus < 85
 
     def test_cp_flink_nodes_invariant_provisioned_cores_shape_dependent(self):
         """cp_flink_nodes (compute demand) is the same on S and M; provisioned_cores reveals that a

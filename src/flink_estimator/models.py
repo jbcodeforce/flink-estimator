@@ -21,7 +21,7 @@ VM_TSHIRT_MB_CPU = {
     # memory_mb, cpu_cores, local_disk_gb
     "S": (16384, 8, 512),
     "M": (65536, 16, 2048),
-    "L": (96448, 48, 6144),
+    "L": (96448, 48, 6144)
 }
 
 class EstimationInput(BaseModel):
@@ -118,7 +118,7 @@ class EstimationInput(BaseModel):
             * self.number_flink_applications
         )
 
-
+        
 class InputSummary(BaseModel):
     """Summary of input parameters with calculated values"""
     messages_per_second: int
@@ -244,6 +244,10 @@ class EstimationMetadata(BaseModel):
     saved_at: str
 
 
+class SaveEstimationRequest(BaseModel):
+    """Request body for POST /api/save-estimation."""
+    input_parameters: EstimationInput
+    estimation_results: Optional[EstimationResult] = None
 class SavedEstimation(BaseModel):
     """Complete saved estimation data structure"""
     metadata: EstimationMetadata

@@ -96,17 +96,18 @@ OS_MEM_MB = 512
 # record per second per core per statement type
 SIMPLE_RPS= 24000 
 MEDIUM_RPS= 11000
-COMPLEX_RPS= 2500
+COMPLEX_RPS= 5500
 
 # Flink Task Manager and job manager parameters
 JOBMANAGER_MEM_MB = 2048
 JOBMANAGER_CPU_CORES = 1  # Minimum viable JM CPU (Kubernetes cpu units) for 9 TM.
-JM_TSHIRT_CPU_MB = {
+JM_TSHIRT_CPU_MB = { # (cpu_cores, memory_mb)
     "S": (1,2048),
     "M": (2,4096),
     "L": (4,8192)
 }
 
+TM_MEM_MB = 4096  # Default Task Manager total process memory size in MB (overridable per input)
 TM_MEM_MB = 4096  # Default Task Manager total process memory size in MB (overridable per input)
 TM_PROCESS_MEMORY_MAX_MB = 64 * 1024  # ceiling for any single TaskManager process (MB)
 IN_FLIGHT_TO_BUFFER = 0.4  # fraction of in-flight (throughput*latency) attributed to TM network/buffer memory
@@ -126,6 +127,12 @@ def _state_disk_gb(input_params: EstimationInput) -> tuple[float, int]:
     local disk; only a bounded slice (Flink managed memory) is cached in RAM and that slice does
     not scale with total state size. So state size is a *disk* requirement, not a RAM requirement.
 
+    Local NVMe disk required to hold keyed RocksDB state.
+
+    Under the EmbeddedRocksDBStateBackend (recommended default) state lives on the TaskManager's
+    local disk; only a bounded slice (Flink managed memory) is cached in RAM and that slice does
+    not scale with total state size. So state size is a *disk* requirement, not a RAM requirement.
+
     Args:
         input_params: The input parameters used for estimation
     Returns:
@@ -133,7 +140,7 @@ def _state_disk_gb(input_params: EstimationInput) -> tuple[float, int]:
     """
     state_size_gb = input_params.state_size_bytes / GIB
     required_disk_gb = math.ceil(state_size_gb * STATE_DISK_AMPLIFICATION)
-    return state_size_gb, required_disk_gb
+    return (state_size_gb, required_disk_gb)
 
 
 def _network_buffer_min_process_memory_mb(
@@ -271,7 +278,7 @@ def _pack_worker_nodes(
             f"A worker node has {usable_ram_per_node} MB usable RAM, too small for a "
             f"{jm_memory} MB JobManager. Use a larger node shape."
         )
-    tms_per_node = usable_ram_per_node // per_tm_mem_mb
+    tms_per_node = usable_ram_per_node // per_tm_mem_mb   # number of TMs that fit per node
     stranded_ram = usable_ram_per_node - tms_per_node * per_tm_mem_mb
 
     apps = max(1, input_params.number_flink_applications)
@@ -437,7 +444,7 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
         count=nb_task_managers,
         total_memory_mb=nb_task_managers * per_tm_mem_mb,
         total_cpus=math.ceil(tm_cores),
-        memory_mb_each=float(per_tm_mem_mb),
+        memory_mb_each=float(per_tm_mem_mb)
     )
 
     cluster_recommendations = ClusterRecommendations(
@@ -482,13 +489,13 @@ def calculate_flink_estimation(input_params: EstimationInput) -> EstimationResul
 
 
 def _latency_cpu_factor(expected_latency_seconds: float) -> float:
-    if expected_latency_seconds <= 0.5:
-        return 1.5
-    if expected_latency_seconds <= 1.0:
+    if expected_latency_seconds <= 0.7:
         return 1.2
-    if expected_latency_seconds < 5.0:
+    if expected_latency_seconds < 1.0:
         return 1.1
-    return 1.0
+    if expected_latency_seconds <= 5.0:
+        return .7
+    return .7
 
 
 def _assess_jobmanager_size(input_params: EstimationInput) -> tuple[int, int]:
@@ -566,10 +573,9 @@ def _throughput_cores(total_throughput_mb_per_sec: float, input_params: Estimati
     CPU need scales with throughput. The real ceiling is distinct-key count / maxParallelism, not
     cores-per-TM; that bound is not modeled here.
     """
-    rec = input_params.avg_record_size_bytes
-    simple_mbps = SIMPLE_RPS * rec / (1024 * 1024)
-    medium_mbps = MEDIUM_RPS * rec / (1024 * 1024)
-    complex_mbps = COMPLEX_RPS * rec / (1024 * 1024)
+    simple_mbps = SIMPLE_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
+    medium_mbps = MEDIUM_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
+    complex_mbps = COMPLEX_RPS * input_params.avg_record_size_bytes / (1024 * 1024)
 
     simple_cores = (total_throughput_mb_per_sec / simple_mbps) * input_params.simple_statements
     medium_cores = (total_throughput_mb_per_sec / medium_mbps) * input_params.medium_statements

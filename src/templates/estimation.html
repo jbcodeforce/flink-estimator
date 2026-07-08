@@ -384,6 +384,32 @@
         }
     }
 
+    function formDataToInputParameters(formData) {
+        const tSize = formData.get('worker_node_t_size');
+        const params = {
+            project_name: formData.get('project_name'),
+            messages_per_second: parseInt(formData.get('messages_per_second'), 10),
+            avg_record_size_bytes: parseInt(formData.get('avg_record_size_bytes'), 10),
+            number_flink_applications: parseInt(formData.get('number_flink_applications') || '1', 10),
+            num_distinct_keys: parseInt(formData.get('num_distinct_keys'), 10),
+            data_skew_risk: formData.get('data_skew_risk'),
+            bandwidth_capacity_gbps: parseInt(formData.get('bandwidth_capacity_gbps'), 10),
+            expected_latency_seconds: parseFloat(formData.get('expected_latency_seconds')),
+            simple_statements: parseInt(formData.get('simple_statements') || '0', 10),
+            medium_statements: parseInt(formData.get('medium_statements') || '0', 10),
+            complex_statements: parseInt(formData.get('complex_statements') || '0', 10),
+            worker_node_memory_mb: parseFloat(formData.get('worker_node_memory_gb')) * 1024,
+            worker_node_cpu_max: parseInt(formData.get('worker_node_cpu_max'), 10),
+            worker_node_disk_gb: parseInt(formData.get('worker_node_disk_gb'), 10),
+            nb_worker_nodes: parseInt(formData.get('nb_worker_nodes'), 10),
+            worker_node_type: formData.get('worker_node_type'),
+        };
+        if (tSize && String(tSize).trim()) {
+            params.worker_node_t_size = String(tSize).trim().toUpperCase();
+        }
+        return params;
+    }
+
     // Save estimation function
     function saveEstimation() {
         const form = document.querySelector('.estimation-form');
@@ -398,10 +424,12 @@
             }
         }
 
-        // Submit to save endpoint
-        fetch('/save-estimation', {
+        fetch('/api/save-estimation', {
             method: 'POST',
-            body: formData
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                input_parameters: formDataToInputParameters(formData),
+            }),
         })
             .then(response => response.json())
             .then(data => {

@@ -24,7 +24,12 @@ import os
 from datetime import datetime
 
 # Import from our custom modules
-from flink_estimator.models import EstimationInput, SavedEstimation
+from flink_estimator.models import (
+    EstimationInput,
+    EstimationResult,
+    SavedEstimation,
+    SaveEstimationRequest,
+)
 from flink_estimator.estimation import (
     calculate_flink_estimation,
     save_estimation_to_json,
@@ -112,7 +117,7 @@ def prefill_from_query_params(query_params) -> dict[str, Any]:
     return out
 
 
-def form_prefill_from_input(input_params: EstimationInput) -> dict[str, Any]:
+def _form_prefill_from_input(input_params: EstimationInput) -> dict[str, Any]:
     """
     Map EstimationInput to estimation.html field names (GB for memory, optional empty t_size).
     """
@@ -123,6 +128,62 @@ def form_prefill_from_input(input_params: EstimationInput) -> dict[str, Any]:
         d["worker_node_t_size"] = ""
     return d
 
+
+def _estimation_input_from_form(
+    *,
+    project_name: str,
+    messages_per_second: int,
+    avg_record_size_bytes: int,
+    num_distinct_keys: int = 100_000,
+    data_skew_risk: str = "medium",
+    bandwidth_capacity_gbps: int = 10,
+    expected_latency_seconds: float = 1.0,
+    simple_statements: int = 0,
+    medium_statements: int = 0,
+    complex_statements: int = 0,
+    worker_node_memory_gb: float = 2.0,
+    worker_node_cpu_max: int = 8,
+    worker_node_disk_gb: int = 512,
+    nb_worker_nodes: int = 3,
+    worker_node_type: str = "bare_metal",
+    worker_node_t_size: Optional[str] = None,
+    number_flink_applications: int = 1,
+) -> EstimationInput:
+    """Build EstimationInput from estimation form field values."""
+    worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
+    return EstimationInput(
+        project_name=project_name,
+        number_flink_applications=number_flink_applications,
+        messages_per_second=messages_per_second,
+        avg_record_size_bytes=avg_record_size_bytes,
+        num_distinct_keys=num_distinct_keys,
+        data_skew_risk=data_skew_risk,  # type: ignore[arg-type]
+        bandwidth_capacity_gbps=bandwidth_capacity_gbps,
+        expected_latency_seconds=expected_latency_seconds,
+        simple_statements=simple_statements,
+        medium_statements=medium_statements,
+        complex_statements=complex_statements,
+        worker_node_memory_mb=worker_node_memory_mb,
+        worker_node_cpu_max=worker_node_cpu_max,
+        worker_node_disk_gb=worker_node_disk_gb,
+        nb_worker_nodes=nb_worker_nodes,
+        worker_node_type=worker_node_type,  # type: ignore[arg-type]
+        worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
+    )
+
+
+def _invalid_filename(filename: str) -> bool:
+    return ".." in filename or "/" in filename or "\\" in filename
+
+
+def _save_estimation_payload(body: SaveEstimationRequest) -> tuple[EstimationInput, EstimationResult]:
+    """Resolve input + result for save; calculate only when results are omitted."""
+    if body.estimation_results is not None:
+        return body.input_parameters, body.estimation_results
+    return body.input_parameters, calculate_flink_estimation(body.input_parameters)
+
+
+# HTML endpoints
 
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
@@ -176,9 +237,7 @@ async def estimate_resources(
     """Process the estimation request and return results."""
     
     try:
-        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
-        # Create EstimationInput from form data
-        input_params = EstimationInput(
+        input_params = _estimation_input_from_form(
             project_name=project_name,
             number_flink_applications=number_flink_applications,
             messages_per_second=messages_per_second,
@@ -190,26 +249,26 @@ async def estimate_resources(
             simple_statements=simple_statements,
             medium_statements=medium_statements,
             complex_statements=complex_statements,
-            worker_node_memory_mb=worker_node_memory_mb,
+            worker_node_memory_gb=worker_node_memory_gb,
             worker_node_cpu_max=worker_node_cpu_max,
             worker_node_disk_gb=worker_node_disk_gb,
             nb_worker_nodes=nb_worker_nodes,
-            worker_node_type=worker_node_type,  # type: ignore[arg-type]
-            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
+            worker_node_type=worker_node_type,
+            worker_node_t_size=worker_node_t_size,
         )
-        
-        # Calculate estimation using Pydantic models
+
         estimation_result = calculate_flink_estimation(input_params)
-        
+
         return templates.TemplateResponse(
             "results.html",
             {
                 "request": request,
                 "project_name": project_name,
                 "estimation": estimation_result,
+                "input_params": input_params,
                 "success": True,
                 "active_page": "results",
-                "prefill": form_prefill_from_input(input_params),
+                "prefill": _form_prefill_from_input(input_params),
             },
         )
     except Exception as e:
@@ -225,61 +284,7 @@ async def estimate_resources(
             },
         )
 
-
-@app.get("/api/estimate")
-async def api_estimate(
-    project_name: str,
-    messages_per_second: int,
-    avg_record_size_bytes: int,
-    number_flink_applications: int = 1,
-    num_distinct_keys: int = 100_000,
-    data_skew_risk: str = "medium",
-    bandwidth_capacity_gbps: int = 10,
-    expected_latency_seconds: float = 1.0,
-    simple_statements: int = 0,
-    medium_statements: int = 0,
-    complex_statements: int = 0,
-    worker_node_memory_gb: float = 2.0,
-    worker_node_cpu_max: int = 8,
-    worker_node_disk_gb: int = 512,
-    cores_per_tm: float = 1.0,
-    mem_per_tm_mb: int = 4096,
-    nb_worker_nodes: int = 3,
-    worker_node_type: str = "bare_metal",
-    worker_node_t_size: Optional[str] = None,
-):
-    """API endpoint for programmatic access to estimation via query parameters."""
-    try:
-        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
-        input_params = EstimationInput(
-            project_name=project_name,
-            number_flink_applications=number_flink_applications,
-            messages_per_second=messages_per_second,
-            avg_record_size_bytes=avg_record_size_bytes,
-            num_distinct_keys=num_distinct_keys,
-            data_skew_risk=data_skew_risk,
-            bandwidth_capacity_gbps=bandwidth_capacity_gbps,
-            expected_latency_seconds=expected_latency_seconds,
-            simple_statements=simple_statements,
-            medium_statements=medium_statements,
-            complex_statements=complex_statements,
-            worker_node_memory_mb=worker_node_memory_mb,
-            worker_node_cpu_max=worker_node_cpu_max,
-            worker_node_disk_gb=worker_node_disk_gb,
-            cores_per_tm=cores_per_tm,
-            mem_per_tm_mb=mem_per_tm_mb,
-            nb_worker_nodes=nb_worker_nodes,
-            worker_node_type=worker_node_type,  # type: ignore[arg-type]
-            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
-        )
-        return calculate_flink_estimation(input_params)
-    except Exception as e:
-        return JSONResponse({
-            "error": str(e),
-            "message": "Invalid input parameters"
-        }, status_code=400)
-
-
+# API endpoints for JSON payloads
 @app.post("/api/estimate")
 async def api_estimate_post(input_params: EstimationInput):
     """API endpoint for programmatic access to estimation via JSON."""
@@ -292,85 +297,19 @@ async def api_estimate_post(input_params: EstimationInput):
         }, status_code=500)
 
 
-@app.post("/save-estimation")
-async def save_estimation(
-    project_name: Annotated[str, Form()],
-    messages_per_second: Annotated[int, Form()],
-    avg_record_size_bytes: Annotated[int, Form()],
-    num_distinct_keys: Annotated[int, Form()] = 100_000,
-    data_skew_risk: Annotated[str, Form()] = "medium",
-    bandwidth_capacity_gbps: Annotated[int, Form()] = 10,
-    expected_latency_seconds: Annotated[float, Form()] = 1.0,
-    simple_statements: Annotated[int, Form()] = 0,
-    medium_statements: Annotated[int, Form()] = 0,
-    complex_statements: Annotated[int, Form()] = 0,
-    worker_node_memory_gb: Annotated[float, Form()] = 2.0,
-    worker_node_cpu_max: Annotated[int, Form()] = 8,
-    worker_node_disk_gb: Annotated[int, Form()] = 512,
-    nb_worker_nodes: Annotated[int, Form()] = 3,
-    worker_node_type: Annotated[str, Form()] = "bare_metal",
-    worker_node_t_size: Annotated[Optional[str], Form()] = None,
-    number_flink_applications: Annotated[int, Form()] = 1,
-):
-    """Save estimation results to JSON file."""
-    try:
-        worker_node_memory_mb = float(worker_node_memory_gb) * 1024.0
-        # Create EstimationInput from form data
-        input_params = EstimationInput(
-            project_name=project_name,
-            number_flink_applications=number_flink_applications,
-            messages_per_second=messages_per_second,
-            avg_record_size_bytes=avg_record_size_bytes,
-            num_distinct_keys=num_distinct_keys,
-            data_skew_risk=data_skew_risk,
-            bandwidth_capacity_gbps=bandwidth_capacity_gbps,
-            expected_latency_seconds=expected_latency_seconds,
-            simple_statements=simple_statements,
-            medium_statements=medium_statements,
-            complex_statements=complex_statements,
-            worker_node_memory_mb=worker_node_memory_mb,
-            worker_node_cpu_max=worker_node_cpu_max,
-            worker_node_disk_gb=worker_node_disk_gb,
-            nb_worker_nodes=nb_worker_nodes,
-            worker_node_type=worker_node_type,  # type: ignore[arg-type]
-            worker_node_t_size=_normalize_worker_node_t_size(worker_node_t_size),
-        )
-        
-        # Calculate estimation using Pydantic models
-        estimation_result = calculate_flink_estimation(input_params)
-        
-        # Save to JSON using Pydantic models
-        filename = save_estimation_to_json(input_params, estimation_result)
-        
-        return JSONResponse({
-            "success": True,
-            "message": f"Estimation saved successfully as {filename}",
-            "filename": filename
-        })
-        
-    except Exception as e:
-        return JSONResponse({
-            "success": False,
-            "message": f"Error saving estimation: {str(e)}"
-        }, status_code=500)
-
-
 @app.post("/api/save-estimation")
-async def api_save_estimation(input_params: EstimationInput):
-    """API endpoint to save estimation via JSON."""
+async def api_save_estimation(body: SaveEstimationRequest):
+    """Save estimation via JSON. Recalculates when estimation_results is omitted."""
     try:
-        # Calculate estimation using Pydantic models
-        estimation_result = calculate_flink_estimation(input_params)
-        
-        # Save to JSON using Pydantic models
+        input_params, estimation_result = _save_estimation_payload(body)
         filename = save_estimation_to_json(input_params, estimation_result)
-        
+
         return JSONResponse({
             "success": True,
             "message": f"Estimation saved successfully as {filename}",
             "filename": filename
         })
-        
+
     except Exception as e:
         return JSONResponse({
             "success": False,
@@ -378,9 +317,12 @@ async def api_save_estimation(input_params: EstimationInput):
         }, status_code=500)
 
 
-@app.get("/download/{filename}")
+@app.get("/api/download/{filename}")
 async def download_estimation(filename: str):
     """Download a saved estimation JSON file."""
+    if _invalid_filename(filename):
+        return JSONResponse({"error": "Invalid filename"}, status_code=400)
+
     saved_dir = get_saved_estimations_directory()
     filepath = os.path.join(saved_dir, filename)
     
@@ -396,14 +338,13 @@ async def download_estimation(filename: str):
     )
 
 
-@app.delete("/delete-estimation/{filename}")
+@app.delete("/api/delete-estimation/{filename}")
 async def delete_estimation(filename: str):
     """Delete a saved estimation JSON file."""
     saved_dir = get_saved_estimations_directory()
     filepath = os.path.join(saved_dir, filename)
-    
-    # Security: ensure filename doesn't contain path traversal
-    if '..' in filename or '/' in filename or '\\' in filename:
+
+    if _invalid_filename(filename):
         return JSONResponse({
             "success": False,
             "message": "Invalid filename"
@@ -461,12 +402,13 @@ async def reload_estimation(request: Request, filename: str):
                 "request": request,
                 "project_name": saved_estimation.input_parameters.project_name,
                 "estimation": saved_estimation.estimation_results,
+                "input_params": saved_estimation.input_parameters,
                 "success": True,
                 "is_reloaded": True,
                 "saved_filename": filename,
                 "saved_at": saved_estimation.metadata.saved_at,
                 "active_page": "results",
-                "prefill": form_prefill_from_input(saved_estimation.input_parameters),
+                "prefill": _form_prefill_from_input(saved_estimation.input_parameters),
             },
         )
         
@@ -486,7 +428,7 @@ async def reload_estimation(request: Request, filename: str):
 
 
 
-@app.get("/saved-estimations")
+@app.get("/api/saved-estimations")
 async def list_saved_estimations():
     """List all saved estimation files."""
     try:
